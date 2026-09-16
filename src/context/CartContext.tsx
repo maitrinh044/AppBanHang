@@ -1,6 +1,7 @@
 import React, { createContext, useContext, useState, useEffect, useMemo } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { MENU_ITEMS, MenuItem } from '../constants/menu';
+import { getDemoOrders, getDemoExpenses } from '../constants/demoData';
 import { db } from '../config/firebase';
 import {
   collection,
@@ -72,6 +73,8 @@ interface CartContextType {
   addExpense: (name: string, amount: number, customDate?: Date) => Promise<void>;
   deleteExpense: (id: string) => Promise<void>;
   editExpense: (id: string, name: string, amount: number, customDate?: Date) => Promise<void>;
+  isDemoMode: boolean;
+  resetDemoData: () => Promise<void>;
 }
 
 const CartContext = createContext<CartContextType | undefined>(undefined);
@@ -88,10 +91,29 @@ export const CartProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [expenses, setExpenses] = useState<Expense[]>([]);
   const [isLoaded, setIsLoaded] = useState(false);
 
+  // Tự động lưu vào AsyncStorage khi chạy ở chế độ Offline / Demo
+  useEffect(() => {
+    if (!db && isLoaded) {
+      AsyncStorage.setItem('@pos_orders', JSON.stringify(orders)).catch(console.error);
+    }
+  }, [orders, isLoaded]);
+
+  useEffect(() => {
+    if (!db && isLoaded) {
+      AsyncStorage.setItem('@pos_expenses', JSON.stringify(expenses)).catch(console.error);
+    }
+  }, [expenses, isLoaded]);
+
+  useEffect(() => {
+    if (!db && isLoaded) {
+      AsyncStorage.setItem('@pos_menu_items', JSON.stringify(menuItems)).catch(console.error);
+    }
+  }, [menuItems, isLoaded]);
+
   // Load data and set up listeners
   useEffect(() => {
     if (!db) {
-      // Local AsyncStorage fallback
+      // Local AsyncStorage fallback (Demo Mode)
       const loadPersistedData = async () => {
         try {
           const cachedMenu = await AsyncStorage.getItem('@pos_menu_items');
@@ -100,12 +122,27 @@ export const CartProvider: React.FC<{ children: React.ReactNode }> = ({ children
           
           if (cachedMenu !== null) {
             setMenuItems(JSON.parse(cachedMenu));
+          } else {
+            setMenuItems(MENU_ITEMS);
+            await AsyncStorage.setItem('@pos_menu_items', JSON.stringify(MENU_ITEMS));
           }
+
           if (cachedOrders !== null) {
             setOrders(JSON.parse(cachedOrders));
+          } else {
+            // Nạp dữ liệu đơn hàng mẫu cho chế độ Demo lần đầu
+            const demoOrders = getDemoOrders();
+            setOrders(demoOrders);
+            await AsyncStorage.setItem('@pos_orders', JSON.stringify(demoOrders));
           }
+
           if (cachedExpenses !== null) {
             setExpenses(JSON.parse(cachedExpenses));
+          } else {
+            // Nạp dữ liệu chi phí mẫu cho chế độ Demo lần đầu
+            const demoExpenses = getDemoExpenses();
+            setExpenses(demoExpenses);
+            await AsyncStorage.setItem('@pos_expenses', JSON.stringify(demoExpenses));
           }
         } catch (error) {
           console.error('Error loading persistent cache data', error);
@@ -768,6 +805,17 @@ export const CartProvider: React.FC<{ children: React.ReactNode }> = ({ children
         addExpense,
         deleteExpense,
         editExpense,
+        isDemoMode: !db,
+        resetDemoData: async () => {
+          const demoOrders = getDemoOrders();
+          const demoExpenses = getDemoExpenses();
+          setOrders(demoOrders);
+          setExpenses(demoExpenses);
+          setMenuItems(MENU_ITEMS);
+          await AsyncStorage.setItem('@pos_orders', JSON.stringify(demoOrders));
+          await AsyncStorage.setItem('@pos_expenses', JSON.stringify(demoExpenses));
+          await AsyncStorage.setItem('@pos_menu_items', JSON.stringify(MENU_ITEMS));
+        },
       }}
     >
       {children}

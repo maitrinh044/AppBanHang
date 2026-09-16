@@ -76,7 +76,18 @@ export default function HomeScreen({
   const systemScheme = useColorScheme();
   const colors = Colors[systemScheme === 'dark' ? 'dark' : 'light'];
 
-  const { orders, expenses, updateOrderStatus } = useCart();
+  const { orders, expenses, updateOrderStatus, isDemoMode, resetDemoData } = useCart();
+  const [toastMessage, setToastMessage] = useState<string | null>(null);
+
+  const showToast = (msg: string) => {
+    setToastMessage(msg);
+    setTimeout(() => setToastMessage(null), 2500);
+  };
+
+  const handleResetDemo = async () => {
+    await resetDemoData();
+    showToast('✨ Đã khôi phục dữ liệu mẫu ban đầu!');
+  };
 
   const flatListRef = useRef<FlatList>(null);
 
@@ -158,6 +169,34 @@ export default function HomeScreen({
               )}
             </View>
           </View>
+
+          {/* Chế độ Demo Banner */}
+          {isDemoMode && (
+            <View
+              style={[
+                styles.demoBanner,
+                {
+                  backgroundColor: colors.backgroundElement,
+                  borderColor: '#FF7B5940',
+                },
+              ]}
+            >
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, flex: 1 }}>
+                <View style={styles.demoDot} />
+                <Text style={[styles.demoBannerText, { color: colors.textSecondary }]} numberOfLines={1}>
+                  <Text style={{ fontWeight: '700', color: '#FF7B59' }}>Demo Mode</Text> · Dữ liệu lưu trên máy bạn
+                </Text>
+              </View>
+              <TouchableOpacity
+                onPress={handleResetDemo}
+                style={[styles.demoResetBtn, { backgroundColor: '#FF7B5915', borderColor: '#FF7B5940' }]}
+                activeOpacity={0.7}
+              >
+                <Ionicons name="reload-outline" size={13} color="#FF7B59" />
+                <Text style={styles.demoResetBtnText}>Dữ liệu mẫu</Text>
+              </TouchableOpacity>
+            </View>
+          )}
 
           {/* Quick Stats — compact single row */}
           <View style={styles.statsRow}>
@@ -602,6 +641,12 @@ export default function HomeScreen({
           </View>
         </ScrollView>
       </SafeAreaView>
+
+      {toastMessage && (
+        <View style={styles.toastContainer}>
+          <Text style={styles.toastText}>{toastMessage}</Text>
+        </View>
+      )}
     </View>
   );
 }
@@ -768,4 +813,60 @@ const styles = StyleSheet.create({
   actionDetails: { flex: 1 },
   actionTitle: { fontSize: 15, fontWeight: 'bold', marginBottom: 4 },
   actionDesc: { fontSize: 12, lineHeight: 16 },
+
+  // ── Demo banner & Toast ─────────────────────────────────────
+  demoBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 12,
+    borderWidth: 1,
+    marginBottom: Spacing.two,
+    gap: 8,
+  },
+  demoDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: '#FF7B59',
+  },
+  demoBannerText: {
+    fontSize: 12,
+  },
+  demoResetBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 8,
+    borderWidth: 1,
+  },
+  demoResetBtnText: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: '#FF7B59',
+  },
+  toastContainer: {
+    position: 'absolute',
+    bottom: 30,
+    alignSelf: 'center',
+    backgroundColor: 'rgba(0, 0, 0, 0.85)',
+    paddingHorizontal: 20,
+    paddingVertical: 12,
+    borderRadius: 24,
+    zIndex: 9999,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.25,
+    shadowRadius: 4,
+    elevation: 5,
+  },
+  toastText: {
+    color: '#FFF',
+    fontSize: 13,
+    fontWeight: '600',
+  },
 });
