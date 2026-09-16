@@ -12,7 +12,7 @@ import {
   ActivityIndicator,
   Modal,
 } from 'react-native';
-import * as XLSX from 'xlsx';
+import ExcelJS from 'exceljs';
 import * as FileSystem from 'expo-file-system/legacy';
 import * as Sharing from 'expo-sharing';
 import { Ionicons } from '@expo/vector-icons';
@@ -175,80 +175,150 @@ export default function OrderHistoryScreen({ onBack }: OrderHistoryScreenProps) 
         return;
       }
 
-      const excelData: any[] = [];
-      const merges: XLSX.Range[] = [];
-      let currentRow = 1; // Row 0 is for headers
+      const rows: any[][] = [];
 
       filtered.forEach(order => {
-        const numItems = order.items.length || 1;
-
         if (order.items.length === 0) {
-          // In case there's an order without items, we still want to show it
-          excelData.push({
-            'Mã đơn': order.id,
-            'Thời gian': order.timestamp,
-            'Bàn': order.tableNumber,
-            'Trạng thái': STATUS_CONFIGS[order.status].label,
-            'Tên món': '',
-            'Số lượng': 0,
-            'Đơn giá': 0,
-            'Thành tiền món': 0,
-            'Tổng tiền đơn': order.total,
-            'Ghi chú đơn': order.note || '',
-            'Ghi chú món': ''
-          });
+          rows.push([
+            order.id,
+            order.timestamp,
+            order.tableNumber,
+            STATUS_CONFIGS[order.status].label,
+            '',
+            0,
+            0,
+            0,
+            order.total,
+            order.note || '',
+            ''
+          ]);
         } else {
           order.items.forEach(item => {
-            excelData.push({
-              'Mã đơn': order.id,
-              'Thời gian': order.timestamp,
-              'Bàn': order.tableNumber,
-              'Trạng thái': STATUS_CONFIGS[order.status].label,
-              'Tên món': item.name,
-              'Số lượng': item.quantity,
-              'Đơn giá': item.price,
-              'Thành tiền món': item.price * item.quantity,
-              'Tổng tiền đơn': order.total,
-              'Ghi chú đơn': order.note || '',
-              'Ghi chú món': item.note || ''
-            });
+            rows.push([
+              order.id,
+              order.timestamp,
+              order.tableNumber,
+              STATUS_CONFIGS[order.status].label,
+              item.name,
+              item.quantity,
+              item.price,
+              item.price * item.quantity,
+              order.total,
+              order.note || '',
+              item.note || ''
+            ]);
           });
         }
-
-        // Merge cells for duplicate order info if there are multiple items
-        if (numItems > 1) {
-          const colsToMerge = [0, 1, 2, 3, 8, 9]; // Mã đơn, Thời gian, Bàn, Trạng thái, Tổng tiền đơn, Ghi chú đơn
-          colsToMerge.forEach(c => {
-            merges.push({ s: { r: currentRow, c }, e: { r: currentRow + numItems - 1, c } });
-          });
-        }
-        
-        currentRow += numItems;
       });
 
-      const worksheet = XLSX.utils.json_to_sheet(excelData);
-      if (merges.length > 0) {
-        worksheet['!merges'] = merges;
-      }
-      
-      const workbook = XLSX.utils.book_new();
-      XLSX.utils.book_append_sheet(workbook, worksheet, 'LichSuDonHang');
+      const workbook = new ExcelJS.Workbook();
+      workbook.creator = SHOP_NAME || 'App Bán Hàng';
+      workbook.created = new Date();
 
+      const worksheet = workbook.addWorksheet('Lịch sử đơn hàng', {
+        views: [{ showGridLines: true }],
+      });
+
+      // Tạo bảng Excel Table chính thức (ListObject kèm Style và Bộ lọc tự động)
+      worksheet.addTable({
+        name: 'BangLichSuDonHang',
+        ref: 'A1',
+        headerRow: true,
+        totalsRow: false,
+        style: {
+          theme: 'TableStyleMedium9',
+          showRowStripes: true,
+        },
+        columns: [
+          { name: 'Mã đơn', filterButton: true },
+          { name: 'Thời gian', filterButton: true },
+          { name: 'Bàn', filterButton: true },
+          { name: 'Trạng thái', filterButton: true },
+          { name: 'Tên món', filterButton: true },
+          { name: 'Số lượng', filterButton: true },
+          { name: 'Đơn giá (đ)', filterButton: true },
+          { name: 'Thành tiền món (đ)', filterButton: true },
+          { name: 'Tổng tiền đơn (đ)', filterButton: true },
+          { name: 'Ghi chú đơn', filterButton: true },
+          { name: 'Ghi chú món', filterButton: true },
+        ],
+        rows,
+      });
+
+      // Định dạng kiểu số tiền cho các cột tiền
+      worksheet.getColumn(6).numFmt = '#,##0';
+      worksheet.getColumn(7).numFmt = '#,##0';
+      worksheet.getColumn(8).numFmt = '#,##0';
+      worksheet.getColumn(9).numFmt = '#,##0';
+
+      // Căn giữa cho các cột ngắn / mã / trạng thái
+      worksheet.getColumn(1).alignment = { horizontal: 'center' };
+      worksheet.getColumn(2).alignment = { horizontal: 'center' };
+      worksheet.getColumn(3).alignment = { horizontal: 'center' };
+      worksheet.getColumn(4).alignment = { horizontal: 'center' };
+      worksheet.getColumn(6).alignment = { horizontal: 'center' };
+
+      // Tự động căn chỉnh độ rộng các cột vừa vặn với nội dung
+      worksheet.columns.forEach((col, index) => {
+        let maxLength = 0;
+        const headerCell = worksheet.getRow(1).getCell(index + 1);
+        maxLength = headerCell.value ? headerCell.value.toString().length : 0;
+
+        col.eachCell?.({ includeEmpty: false }, (cell, rowNumber) => {
+          if (rowNumber > 1 && cell.value !== null && cell.value !== undefined) {
+            const str = typeof cell.value === 'number'
+              ? cell.value.toLocaleString('vi-VN')
+              : cell.value.toString();
+            if (str.length > maxLength) {
+              maxLength = str.length;
+            }
+          }
+        });
+        col.width = Math.max(maxLength + 4, 12);
+      });
+
+      const buffer = await workbook.xlsx.writeBuffer();
       const fileName = `LichSuDonHang_${Date.now()}.xlsx`;
 
       if (Platform.OS === 'web') {
-        XLSX.writeFile(workbook, fileName);
+        const blob = new Blob([buffer], {
+          type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        });
+        const url = window.URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = fileName;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        window.URL.revokeObjectURL(url);
       } else {
-        const base64 = XLSX.write(workbook, { type: 'base64', bookType: 'xlsx' });
-        const fileUri = FileSystem.cacheDirectory + fileName;
+        let base64String = '';
+        const globalBuffer = (globalThis as any)?.Buffer;
+        if (globalBuffer) {
+          base64String = globalBuffer.from(buffer).toString('base64');
+        } else {
+          const bytes = new Uint8Array(buffer);
+          let binary = '';
+          const chunkSize = 8192;
+          for (let i = 0; i < bytes.length; i += chunkSize) {
+            binary += String.fromCharCode.apply(null, Array.from(bytes.subarray(i, i + chunkSize)));
+          }
+          base64String = (globalThis as any).btoa ? (globalThis as any).btoa(binary) : binary;
+        }
 
-        await FileSystem.writeAsStringAsync(fileUri, base64, {
+        const fileUri = FileSystem.cacheDirectory + fileName;
+        await FileSystem.writeAsStringAsync(fileUri, base64String, {
           encoding: 'base64',
         });
 
         const isAvailable = await Sharing.isAvailableAsync();
         if (isAvailable) {
-          await Sharing.shareAsync(fileUri);
+          await Sharing.shareAsync(fileUri, {
+            mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+            dialogTitle: 'Chia sẻ file Excel',
+            UTI: 'com.microsoft.excel.xlsx',
+          });
         } else {
           showToast('Chia sẻ không khả dụng trên thiết bị này');
         }
