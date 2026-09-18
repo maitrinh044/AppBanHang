@@ -14,32 +14,8 @@ import {
 import { Ionicons } from '@expo/vector-icons';
 import { Colors, Spacing } from '../constants/theme';
 import { useCart, Order, OrderItem } from '../context/CartContext';
-import { useCurrentTime, getOrderWaitInfo } from '../utils/orderTime';
+import { useCurrentTime, getOrderWaitInfo, isOrderToday } from '../utils/orderTime';
 import OrderTimeBadge from '../components/OrderTimeBadge';
-
-const parseTimestamp = (ts: string): Date => {
-  const parts = ts.split(' ');
-  if (parts.length < 2) return new Date();
-  const dateParts = parts[1].split('/');
-  const timeParts = parts[0].split(':');
-  return new Date(
-    parseInt(dateParts[2]),
-    parseInt(dateParts[1]) - 1,
-    parseInt(dateParts[0]),
-    parseInt(timeParts[0]),
-    parseInt(timeParts[1]),
-    parseInt(timeParts[2])
-  );
-};
-
-const isTodayDate = (date: Date) => {
-  const today = new Date();
-  return (
-    date.getDate() === today.getDate() &&
-    date.getMonth() === today.getMonth() &&
-    date.getFullYear() === today.getFullYear()
-  );
-};
 
 const cleanFoodName = (name: string) => {
   const cleaned = name.replace(/^[Bb]ánh\s+[Cc]anh\s+/, '');
@@ -99,16 +75,16 @@ export default function HomeScreen({
     activeOrders.filter((o) => o.status !== 'paid').map((o) => o.tableNumber)
   ).size;
   const completedOrders = activeOrders.filter(
-    (o) => (o.status === 'completed' || o.status === 'paid') && isTodayDate(parseTimestamp(o.timestamp))
+    (o) => (o.status === 'completed' || o.status === 'paid') && isOrderToday(o)
   ).length;
   const unpaidOrdersCount = activeOrders.filter((o) => o.status !== 'paid').length;
   // Đơn paid bị xóa mềm vẫn tính vào doanh thu (đã thu tiền thật)
   const totalRevenue = orders
-    .filter((o) => o.status === 'paid' && (!o.isDeleted || o.status === 'paid') && isTodayDate(parseTimestamp(o.timestamp)))
+    .filter((o) => o.status === 'paid' && (!o.isDeleted || o.status === 'paid') && isOrderToday(o))
     .reduce((sum, o) => sum + o.total, 0);
 
   const todayExpenses = expenses
-    .filter((e) => isTodayDate(parseTimestamp(e.timestamp)))
+    .filter((e) => isOrderToday(e))
     .reduce((sum, e) => sum + e.amount, 0);
   const todayProfit = totalRevenue - todayExpenses;
 

@@ -12,6 +12,7 @@ import {
   useColorScheme,
   useWindowDimensions,
   Alert,
+  ActivityIndicator,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { Colors, Spacing } from '../constants/theme';
@@ -54,6 +55,7 @@ export default function AddOrderScreen({ onBack, initialTable }: AddOrderScreenP
   const [itemNotes, setItemNotes] = useState<{ [foodId: string]: string }>({});
   const [activeTab, setActiveTab] = useState<'all' | 'main' | 'extra' | 'drink'>('all');
   const [toastMessage, setToastMessage] = useState<string | null>(null);
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
   // Responsive columns
   const tableCols = width > 1000 ? 6 : width > 600 ? 4 : 2;
@@ -110,7 +112,7 @@ export default function AddOrderScreen({ onBack, initialTable }: AddOrderScreenP
     }, 0);
   };
 
-  const handleSaveOrder = () => {
+  const handleSaveOrder = async () => {
     const selected = getSelectedItems().map((item) => ({
       foodId: item.foodId,
       quantity: item.quantity,
@@ -168,8 +170,16 @@ export default function AddOrderScreen({ onBack, initialTable }: AddOrderScreenP
     const vegNote = vegList.length > 0 ? `Rau: ${vegList.join(', ')}` : '';
     const finalNote = [note.trim(), vegNote].filter(Boolean).join(' - ');
 
-    addOrder(tableLabel, selected, finalNote);
-    onBack(`Đã lưu đơn hàng ${tableLabel} thành công!`);
+    if (isSubmitting) return;
+    setIsSubmitting(true);
+    try {
+      await addOrder(tableLabel, selected, finalNote);
+      onBack(`Đã lưu đơn hàng ${tableLabel} thành công!`);
+    } catch (err) {
+      console.error('Lỗi khi lưu đơn hàng:', err);
+      showToast('Có lỗi xảy ra khi lưu đơn. Vui lòng thử lại!');
+      setIsSubmitting(false);
+    }
   };
 
   const totalAmount = calculateTotal();
@@ -598,9 +608,19 @@ export default function AddOrderScreen({ onBack, initialTable }: AddOrderScreenP
             <Text style={{ color: colors.textSecondary, fontSize: 12 }}>Đã chọn {selectedItemsCount} món</Text>
             <Text style={{ color: colors.primary, fontWeight: 'bold', fontSize: 18 }}>{formatPrice(totalAmount)}</Text>
           </View>
-          <TouchableOpacity onPress={handleSaveOrder} style={[styles.saveBtn, { backgroundColor: colors.primary }]}>
-            <Ionicons name="save-outline" size={18} color="#FFF" />
-            <Text style={styles.saveBtnText}>Lưu Đơn Hàng</Text>
+          <TouchableOpacity
+            onPress={handleSaveOrder}
+            disabled={isSubmitting}
+            style={[styles.saveBtn, { backgroundColor: colors.primary, opacity: isSubmitting ? 0.7 : 1 }]}
+          >
+            {isSubmitting ? (
+              <ActivityIndicator size="small" color="#FFF" />
+            ) : (
+              <>
+                <Ionicons name="save-outline" size={18} color="#FFF" />
+                <Text style={styles.saveBtnText}>Lưu Đơn Hàng</Text>
+              </>
+            )}
           </TouchableOpacity>
         </View>
       </>

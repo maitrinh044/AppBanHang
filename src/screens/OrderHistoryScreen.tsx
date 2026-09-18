@@ -18,7 +18,7 @@ import * as Sharing from 'expo-sharing';
 import { Ionicons } from '@expo/vector-icons';
 import { Colors, Spacing } from '../constants/theme';
 import { useCart, Order, OrderStatus } from '../context/CartContext';
-import { useCurrentTime } from '../utils/orderTime';
+import { useCurrentTime, getOrderDate, getOrderTimestampMs, isOrderToday } from '../utils/orderTime';
 import OrderTimeBadge from '../components/OrderTimeBadge';
 import DatePickerModal from '../components/DatePickerModal';
 import { SHOP_NAME, SHOP_PHONE, SHOP_ADDRESS, SHOP_TAGLINE } from '../config/shop';
@@ -32,21 +32,6 @@ const formatDate = (date: Date) => {
   const m = String(date.getMonth() + 1).padStart(2, '0');
   const y = date.getFullYear();
   return `${d}/${m}/${y}`;
-};
-
-const parseTimestamp = (ts: string): Date => {
-  const parts = ts.split(' ');
-  if (parts.length < 2) return new Date();
-  const dateParts = parts[1].split('/');
-  const timeParts = parts[0].split(':');
-  return new Date(
-    parseInt(dateParts[2]), // year
-    parseInt(dateParts[1]) - 1, // month (0-indexed)
-    parseInt(dateParts[0]), // day
-    parseInt(timeParts[0]), // hours
-    parseInt(timeParts[1]), // minutes
-    parseInt(timeParts[2]) // seconds
-  );
 };
 
 const STATUS_CONFIGS: {
@@ -145,7 +130,7 @@ export default function OrderHistoryScreen({ onBack }: OrderHistoryScreenProps) 
       if (exportFilterType === 'day') {
         const d = exportStartDate;
         filtered = filtered.filter((order) => {
-          const orderDate = parseTimestamp(order.timestamp);
+          const orderDate = getOrderDate(order);
           return orderDate.getDate() === d.getDate() &&
                  orderDate.getMonth() === d.getMonth() &&
                  orderDate.getFullYear() === d.getFullYear();
@@ -154,18 +139,18 @@ export default function OrderHistoryScreen({ onBack }: OrderHistoryScreenProps) 
         const start = new Date(exportStartDate.getFullYear(), exportStartDate.getMonth(), exportStartDate.getDate(), 0, 0, 0);
         const end = new Date(exportEndDate.getFullYear(), exportEndDate.getMonth(), exportEndDate.getDate(), 23, 59, 59);
         filtered = filtered.filter((order) => {
-          const orderDate = parseTimestamp(order.timestamp);
+          const orderDate = getOrderDate(order);
           return orderDate >= start && orderDate <= end;
         });
       } else if (exportFilterType === 'month') {
         filtered = filtered.filter((order) => {
-          const orderDate = parseTimestamp(order.timestamp);
+          const orderDate = getOrderDate(order);
           return orderDate.getMonth() + 1 === exportMonth &&
                  orderDate.getFullYear() === exportYear;
         });
       } else if (exportFilterType === 'year') {
         filtered = filtered.filter((order) => {
-          const orderDate = parseTimestamp(order.timestamp);
+          const orderDate = getOrderDate(order);
           return orderDate.getFullYear() === exportYear;
         });
       }
@@ -344,28 +329,20 @@ export default function OrderHistoryScreen({ onBack }: OrderHistoryScreenProps) 
     }
 
     if (filterType === 'today') {
-      const today = new Date();
-      filtered = filtered.filter((order) => {
-        const orderDate = parseTimestamp(order.timestamp);
-        return (
-          orderDate.getDate() === today.getDate() &&
-          orderDate.getMonth() === today.getMonth() &&
-          orderDate.getFullYear() === today.getFullYear()
-        );
-      });
+      filtered = filtered.filter((order) => isOrderToday(order));
     } else if (filterType === 'range') {
       const start = new Date(startDate.getFullYear(), startDate.getMonth(), startDate.getDate(), 0, 0, 0);
       const end = new Date(endDate.getFullYear(), endDate.getMonth(), endDate.getDate(), 23, 59, 59);
       filtered = filtered.filter((order) => {
-        const orderDate = parseTimestamp(order.timestamp);
+        const orderDate = getOrderDate(order);
         return orderDate >= start && orderDate <= end;
       });
     }
 
-    // Sort newest first
+    // Sort newest first (chính xác tuyệt đối theo mili-giây)
     const newestFirst = filtered.sort((a, b) => {
-      const timeA = parseTimestamp(a.timestamp).getTime();
-      const timeB = parseTimestamp(b.timestamp).getTime();
+      const timeA = getOrderTimestampMs(a);
+      const timeB = getOrderTimestampMs(b);
       return timeB - timeA;
     });
     return newestFirst;

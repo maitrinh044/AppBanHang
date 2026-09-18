@@ -2,32 +2,88 @@ import { useState, useEffect } from 'react';
 import { Order } from '../context/CartContext';
 
 /**
- * Extracts order timestamp in milliseconds.
- * Checks order.createdAt first, then parses order.timestamp string ("HH:mm:ss dd/mm/yyyy").
+ * Tạo chuỗi timestamp chuẩn "HH:mm:ss dd/MM/yyyy" độc lập với locale của trình duyệt/thiết bị.
+ * Tuyệt đối không bao giờ bị lệch SA/CH hay AM/PM.
  */
-export function getOrderTimestampMs(order: Partial<Order>): number {
+export function formatOrderTimestamp(date: Date = new Date()): string {
+  const hh = String(date.getHours()).padStart(2, '0');
+  const mm = String(date.getMinutes()).padStart(2, '0');
+  const ss = String(date.getSeconds()).padStart(2, '0');
+  const d = String(date.getDate()).padStart(2, '0');
+  const m = String(date.getMonth() + 1).padStart(2, '0');
+  const y = date.getFullYear();
+  return `${hh}:${mm}:${ss} ${d}/${m}/${y}`;
+}
+
+/**
+ * Trích xuất timestamp thành mili-giây chính xác tuyệt đối.
+ * Ưu tiên dùng số createdAt (mili-giây chuẩn epoch) có sẵn trong đơn.
+ * Nếu không có createdAt, dùng regex phân tích chuỗi timestamp (hỗ trợ cả SA/CH, AM/PM, ISO...).
+ */
+export function getOrderTimestampMs(order: { createdAt?: number; timestamp?: string }): number {
   if (typeof order.createdAt === 'number' && !isNaN(order.createdAt) && order.createdAt > 0) {
     return order.createdAt;
   }
   if (order.timestamp) {
-    const parts = order.timestamp.trim().split(/\s+/);
-    if (parts.length >= 2) {
-      const timeParts = parts[0].split(':');
-      const dateParts = parts[1].split('/');
-      if (dateParts.length === 3 && timeParts.length >= 2) {
-        const d = new Date(
-          parseInt(dateParts[2], 10),
-          parseInt(dateParts[1], 10) - 1,
-          parseInt(dateParts[0], 10),
-          parseInt(timeParts[0], 10),
-          parseInt(timeParts[1], 10),
-          timeParts[2] ? parseInt(timeParts[2], 10) : 0
-        );
-        if (!isNaN(d.getTime())) return d.getTime();
+    const str = String(order.timestamp).trim();
+    const nativeTime = new Date(str).getTime();
+    if (!isNaN(nativeTime)) return nativeTime;
+
+    const dateMatch = str.match(/(\d{1,2})\/(\d{1,2})\/(\d{4})/);
+    const timeMatch = str.match(/(\d{1,2}):(\d{1,2})(?::(\d{1,2}))?/);
+
+    if (dateMatch) {
+      const day = parseInt(dateMatch[1], 10);
+      const month = parseInt(dateMatch[2], 10) - 1;
+      const year = parseInt(dateMatch[3], 10);
+
+      let hours = timeMatch ? parseInt(timeMatch[1], 10) : 0;
+      const minutes = timeMatch ? parseInt(timeMatch[2], 10) : 0;
+      const seconds = timeMatch && timeMatch[3] ? parseInt(timeMatch[3], 10) : 0;
+
+      if (/CH|PM/i.test(str) && hours < 12) {
+        hours += 12;
+      } else if (/SA|AM/i.test(str) && hours === 12) {
+        hours = 0;
       }
+
+      const d = new Date(year, month, day, hours, minutes, seconds);
+      if (!isNaN(d.getTime())) return d.getTime();
     }
   }
-  return Date.now();
+  return 0;
+}
+
+/**
+ * Trả về đối tượng Date chuẩn từ đơn hàng.
+ */
+export function getOrderDate(order: { createdAt?: number; timestamp?: string }): Date {
+  const ms = getOrderTimestampMs(order);
+  return ms > 0 ? new Date(ms) : new Date();
+}
+
+/**
+ * Kiểm tra xem đơn hàng có phải được tạo trong ngày hôm nay hay không.
+ */
+export function isOrderToday(order: { createdAt?: number; timestamp?: string }): boolean {
+  const orderDate = getOrderDate(order);
+  const today = new Date();
+  return (
+    orderDate.getDate() === today.getDate() &&
+    orderDate.getMonth() === today.getMonth() &&
+    orderDate.getFullYear() === today.getFullYear()
+  );
+}
+
+/**
+ * Kiểm tra 2 ngày có cùng ngày/tháng/năm hay không.
+ */
+export function isSameDay(dateA: Date, dateB: Date): boolean {
+  return (
+    dateA.getDate() === dateB.getDate() &&
+    dateA.getMonth() === dateB.getMonth() &&
+    dateA.getFullYear() === dateB.getFullYear()
+  );
 }
 
 /**
@@ -35,6 +91,7 @@ export function getOrderTimestampMs(order: Partial<Order>): number {
  */
 export function getOrderElapsedMinutes(order: Partial<Order>, now: number = Date.now()): number {
   const orderTimeMs = getOrderTimestampMs(order);
+  if (orderTimeMs === 0) return 0;
   const diffMs = now - orderTimeMs;
   if (diffMs < 0) return 0;
   return Math.floor(diffMs / 60000);
@@ -132,4 +189,3 @@ export function useCurrentTime(intervalMs = 15000): number {
 
   return now;
 }
-

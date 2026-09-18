@@ -2,6 +2,7 @@ import React, { createContext, useContext, useState, useEffect, useMemo } from '
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { MENU_ITEMS, MenuItem } from '../constants/menu';
 import { getDemoOrders, getDemoExpenses } from '../constants/demoData';
+import { formatOrderTimestamp } from '../utils/orderTime';
 import { db } from '../config/firebase';
 import {
   collection,
@@ -480,16 +481,17 @@ export const CartProvider: React.FC<{ children: React.ReactNode }> = ({ children
       total,
       status: 'pending',
       note: note.trim() !== '' ? note.trim() : undefined,
-      timestamp: new Date(orderCreatedAt).toLocaleTimeString('vi-VN', {
-        hour: '2-digit',
-        minute: '2-digit',
-        second: '2-digit',
-      }) + ' ' + new Date(orderCreatedAt).toLocaleDateString('vi-VN'),
+      timestamp: formatOrderTimestamp(new Date(orderCreatedAt)),
       createdAt: orderCreatedAt,
     };
 
     // Cập nhật giao diện ngay lập tức (0ms delay)
-    setOrders((prev) => [newOrder, ...prev.filter((o) => o.id !== newOrder.id)]);
+    setOrders((prev) => {
+      const next = [newOrder, ...prev.filter((o) => o.id !== newOrder.id)];
+      // Lưu ngay lập tức vào bộ nhớ máy để không bao giờ bị mất đơn khi F5/rớt mạng
+      AsyncStorage.setItem('@pos_orders', JSON.stringify(next)).catch(console.error);
+      return next;
+    });
 
     if (db) {
       try {

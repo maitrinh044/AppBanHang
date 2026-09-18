@@ -16,6 +16,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { Colors, Spacing } from '../constants/theme';
 import { useCart, Order } from '../context/CartContext';
 import DatePickerModal from '../components/DatePickerModal';
+import { getOrderDate } from '../utils/orderTime';
 
 const formatDate = (date: Date) => {
   const d = String(date.getDate()).padStart(2, '0');
@@ -25,18 +26,7 @@ const formatDate = (date: Date) => {
 };
 
 const parseTimestamp = (ts: string): Date => {
-  const parts = ts.split(' ');
-  if (parts.length < 2) return new Date();
-  const dateParts = parts[1].split('/');
-  const timeParts = parts[0].split(':');
-  return new Date(
-    parseInt(dateParts[2]), // year
-    parseInt(dateParts[1]) - 1, // month (0-indexed)
-    parseInt(dateParts[0]), // day
-    parseInt(timeParts[0]), // hours
-    parseInt(timeParts[1]), // minutes
-    parseInt(timeParts[2]) // seconds
-  );
+  return getOrderDate({ timestamp: ts });
 };
 
 const isTodayDate = (date: Date) => {
