@@ -31,6 +31,7 @@ interface HomeScreenProps {
   onNavigateToUnpaidOrders: () => void;
   onNavigateToRevenueStats: () => void;
   onNavigateToChangePassword: () => void;
+  onNavigateToDiscountConfig?: () => void;
   onNavigateToTrashOrders?: () => void;
   onNavigateToTableMap?: () => void;
   onLogout?: () => void;
@@ -46,6 +47,7 @@ export default function HomeScreen({
   onNavigateToUnpaidOrders,
   onNavigateToRevenueStats,
   onNavigateToChangePassword,
+  onNavigateToDiscountConfig,
   onNavigateToTrashOrders,
   onLogout,
 }: HomeScreenProps) {
@@ -594,6 +596,24 @@ export default function HomeScreen({
                   </View>
                   <Ionicons name="chevron-forward" size={20} color={colors.textSecondary} />
                 </TouchableOpacity>
+
+                {onNavigateToDiscountConfig && (
+                  <TouchableOpacity
+                    onPress={onNavigateToDiscountConfig}
+                    style={[styles.actionCard, { backgroundColor: colors.backgroundElement, borderColor: colors.border }]}
+                  >
+                    <View style={[styles.iconBox, { backgroundColor: '#ECFDF5' }]}>
+                      <Ionicons name="pricetags" size={32} color="#059669" />
+                    </View>
+                    <View style={styles.actionDetails}>
+                      <Text style={[styles.actionTitle, { color: colors.text }]}>Cấu Hình Chiết Khấu</Text>
+                      <Text style={[styles.actionDesc, { color: colors.textSecondary }]}>
+                        Tùy chỉnh % chiết khấu mặc định cho Grab, ShopeeFood và các kênh bán.
+                      </Text>
+                    </View>
+                    <Ionicons name="chevron-forward" size={20} color={colors.textSecondary} />
+                  </TouchableOpacity>
+                )}
 
                 {onNavigateToTrashOrders && (
                   <TouchableOpacity

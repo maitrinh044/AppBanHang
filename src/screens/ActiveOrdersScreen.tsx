@@ -118,14 +118,24 @@ export default function ActiveOrdersScreen({ onBack }: ActiveOrdersScreenProps) 
     );
   };
 
-  const saveEditOrder = async () => {
+  const saveEditOrder = () => {
     if (!editingOrder || editItems.length === 0) {
       showToast('Vui lòng chọn ít nhất 1 món!');
       return;
     }
-    await updateOrderItems(editingOrder.id, editItems, editNote);
-    showToast('Đã cập nhật đơn hàng!');
+    const orderId = editingOrder.id;
+    const items = [...editItems];
+    const note = editNote;
+
+    // Đóng popup & hiện thông báo thành công tức thì (0ms)
     closeEditOrder();
+    showToast('Đã cập nhật đơn hàng!');
+
+    // Gửi cập nhật ngầm lên Firestore
+    updateOrderItems(orderId, items, note).catch((err) => {
+      console.error('Lỗi khi lưu cập nhật đơn hàng:', err);
+      showToast('Lỗi lưu đơn hàng lên máy chủ!');
+    });
   };
 
   const now = useCurrentTime(15000);
@@ -199,7 +209,16 @@ export default function ActiveOrdersScreen({ onBack }: ActiveOrdersScreenProps) 
                           Mã: {order.id} • {order.timestamp}
                         </Text>
                       </View>
-                      <View style={{ flexDirection: 'row', gap: 4, alignItems: 'flex-start' }}>
+                      <View style={{ flexDirection: 'row', gap: 6, alignItems: 'center' }}>
+                        {/* Nút tick xanh nhanh ở header */}
+                        <TouchableOpacity
+                          onPress={() => handleUpdateStatus(order.id, 'completed')}
+                          style={styles.headerDoneTickBtn}
+                          activeOpacity={0.7}
+                        >
+                          <Ionicons name="checkmark-done" size={20} color="#2EC4B6" />
+                        </TouchableOpacity>
+
                         <TouchableOpacity
                           onPress={() => openEditOrder(order)}
                           style={[styles.editBtn, { backgroundColor: colors.primary + '20' }]}
@@ -300,13 +319,38 @@ export default function ActiveOrdersScreen({ onBack }: ActiveOrdersScreenProps) 
 
                     {/* Total Row */}
                     <View style={styles.totalRow}>
-                      <Text style={[styles.totalLabel, { color: colors.text }, isTablet && { fontSize: 18 }]}>Tổng tiền:</Text>
-                      <Text style={[styles.totalValue, { color: colors.primary }, isTablet && { fontSize: 22 }]}>
-                        {formatPrice(order.total)}
-                      </Text>
+                      {order.discountAmount && order.discountAmount > 0 ? (
+                        <View style={{ flex: 1 }}>
+                          <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 2 }}>
+                            <Text style={[{ fontSize: 12, color: colors.textSecondary }, isTablet && { fontSize: 15 }]}>Tạm tính:</Text>
+                            <Text style={[{ fontSize: 12, color: colors.textSecondary }, isTablet && { fontSize: 15 }]}>{formatPrice(order.subtotal || (order.total + order.discountAmount))}</Text>
+                          </View>
+                          <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 4 }}>
+                            <Text style={[{ fontSize: 12, color: '#D97706', fontWeight: '600' }, isTablet && { fontSize: 15 }]}>
+                              Chiết khấu ({order.discountPercent}%):
+                            </Text>
+                            <Text style={[{ fontSize: 12, color: '#D97706', fontWeight: '600' }, isTablet && { fontSize: 15 }]}>
+                              -{formatPrice(order.discountAmount)}
+                            </Text>
+                          </View>
+                          <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+                            <Text style={[styles.totalLabel, { color: colors.text }, isTablet && { fontSize: 18 }]}>Thực thu:</Text>
+                            <Text style={[styles.totalValue, { color: colors.primary }, isTablet && { fontSize: 22 }]}>
+                              {formatPrice(order.total)}
+                            </Text>
+                          </View>
+                        </View>
+                      ) : (
+                        <>
+                          <Text style={[styles.totalLabel, { color: colors.text }, isTablet && { fontSize: 18 }]}>Tổng tiền:</Text>
+                          <Text style={[styles.totalValue, { color: colors.primary }, isTablet && { fontSize: 22 }]}>
+                            {formatPrice(order.total)}
+                          </Text>
+                        </>
+                      )}
                     </View>
 
-                    {/* Status + Bill Row */}
+                    {/* Status + Bill + Nút xác nhận nhanh làm xong */}
                     <View style={styles.statusAndBillRow}>
                       <View style={{ flex: 1 }}>
                         <Text style={[styles.statusSwitcherTitle, { color: colors.textSecondary }]}>
@@ -342,13 +386,22 @@ export default function ActiveOrdersScreen({ onBack }: ActiveOrdersScreenProps) 
                         </View>
                       </View>
 
-                      {/* Bill Button */}
+                      {/* Bill Button như cũ */}
                       <TouchableOpacity
                         onPress={() => setBillOrder(order)}
                         style={[styles.billBtn, { backgroundColor: '#ffffffff', borderColor: '#000000ff' }]}
                       >
-                        <Ionicons name="receipt-outline" size={10} color="#000000ff" />
+                        <Ionicons name="receipt-outline" size={12} color="#000000ff" />
                         <Text style={styles.billBtnText}>In Bill</Text>
+                      </TouchableOpacity>
+
+                      {/* Nút xác nhận nhanh làm xong - dấu tick xanh to như bên ngoài */}
+                      <TouchableOpacity
+                        onPress={() => handleUpdateStatus(order.id, 'completed')}
+                        style={[styles.quickDoneConfirmBtn, isTablet && { width: 54, height: 46, borderRadius: 14 }]}
+                        activeOpacity={0.7}
+                      >
+                        <Ionicons name="checkmark-done" size={isTablet ? 28 : 24} color="#2EC4B6" />
                       </TouchableOpacity>
                     </View>
 
@@ -870,25 +923,46 @@ const styles = StyleSheet.create({
     marginTop: 2,
   },
 
+  headerDoneTickBtn: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: '#2EC4B625',
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: '#2EC4B670',
+  },
   statusAndBillRow: {
     flexDirection: 'row',
     alignItems: 'flex-end',
     marginTop: 8,
-    gap: 10,
+    gap: 8,
   },
   billBtn: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 4,
-    paddingHorizontal: 12,
+    paddingHorizontal: 10,
     paddingVertical: 8,
     borderRadius: 10,
     borderWidth: 1,
+    height: 40,
   },
   billBtnText: {
-    color: '#a8b4ff',
+    color: '#000000',
     fontSize: 12,
     fontWeight: 'bold',
+  },
+  quickDoneConfirmBtn: {
+    width: 48,
+    height: 40,
+    borderRadius: 12,
+    backgroundColor: '#2EC4B620',
+    borderWidth: 1.5,
+    borderColor: '#2EC4B6',
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   billOverlay: {
     flex: 1,

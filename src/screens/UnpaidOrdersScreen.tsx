@@ -121,27 +121,42 @@ export default function UnpaidOrdersScreen({ onBack }: UnpaidOrdersScreenProps) 
     );
   };
 
-  const saveEditOrder = async () => {
+  const saveEditOrder = () => {
     if (!editingOrder || editItems.length === 0) {
       showToast('Vui lòng chọn ít nhất 1 món!');
       return;
     }
 
-    // Automatically send back to pending (kitchen display) if the order was completed,
-    // so the kitchen gets notified of the newly added items.
+    const orderId = editingOrder.id;
+    const items = [...editItems];
+    const note = editNote;
+
+    // Tự động chuyển về Chờ làm (bếp) nếu đơn đã hoàn thành trước đó
     let statusToUpdate: OrderStatus | undefined = undefined;
     if (editingOrder.status === 'completed') {
       statusToUpdate = 'pending';
     }
 
-    await updateOrderItems(editingOrder.id, editItems, editNote);
+    // Đóng popup & thông báo thành công tức thì (0ms)
+    closeEditOrder();
     if (statusToUpdate) {
-      await updateOrderStatus(editingOrder.id, statusToUpdate);
       showToast('Đã thêm món & chuyển lại đơn sang Bếp chờ làm!');
     } else {
       showToast('Đã cập nhật đơn hàng!');
     }
-    closeEditOrder();
+
+    // Đồng bộ ngầm lên Firestore
+    (async () => {
+      try {
+        await updateOrderItems(orderId, items, note);
+        if (statusToUpdate) {
+          await updateOrderStatus(orderId, statusToUpdate);
+        }
+      } catch (err) {
+        console.error('Lỗi khi lưu cập nhật đơn hàng:', err);
+        showToast('Lỗi lưu đơn hàng lên máy chủ!');
+      }
+    })();
   };
 
   // Filter out paid orders and soft-deleted orders, sort newest first, then filter by search
@@ -325,10 +340,33 @@ export default function UnpaidOrdersScreen({ onBack }: UnpaidOrdersScreenProps) 
 
                     {/* Total Row */}
                     <View style={styles.totalRow}>
-                      <Text style={[styles.totalLabel, { color: colors.text }]}>Tổng tiền:</Text>
-                      <Text style={[styles.totalValue, { color: colors.primary }]}>
-                        {formatPrice(order.total)}
-                      </Text>
+                      {order.discountAmount && order.discountAmount > 0 ? (
+                        <View style={{ flex: 1 }}>
+                          <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 2 }}>
+                            <Text style={{ fontSize: 12, color: colors.textSecondary }}>Tạm tính:</Text>
+                            <Text style={{ fontSize: 12, color: colors.textSecondary }}>{formatPrice(order.subtotal || (order.total + order.discountAmount))}</Text>
+                          </View>
+                          <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 4 }}>
+                            <Text style={{ fontSize: 12, color: '#D97706', fontWeight: '600' }}>
+                              Chiết khấu ({order.discountPercent}%):
+                            </Text>
+                            <Text style={{ fontSize: 12, color: '#D97706', fontWeight: '600' }}>
+                              -{formatPrice(order.discountAmount)}
+                            </Text>
+                          </View>
+                          <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+                            <Text style={[styles.totalLabel, { color: colors.text }]}>Thực thu:</Text>
+                            <Text style={[styles.totalValue, { color: colors.primary }]}>{formatPrice(order.total)}</Text>
+                          </View>
+                        </View>
+                      ) : (
+                        <>
+                          <Text style={[styles.totalLabel, { color: colors.text }]}>Tổng tiền:</Text>
+                          <Text style={[styles.totalValue, { color: colors.primary }]}>
+                            {formatPrice(order.total)}
+                          </Text>
+                        </>
+                      )}
                     </View>
 
                     {/* Status + Bill Row */}

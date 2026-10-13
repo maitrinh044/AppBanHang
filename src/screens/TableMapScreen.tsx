@@ -40,7 +40,7 @@ export default function TableMapScreen({ onBack, onOrderForTable }: TableMapScre
   const isLandscape = screenWidth > screenHeight;
   const isTablet = screenWidth >= 600;
 
-  const { orders, updateOrderStatus, transferTable, mergeTables } = useCart();
+  const { orders, updateOrderStatus, transferTable, mergeTables, tableDiscounts, setTableDiscount } = useCart();
   const now = useCurrentTime(15000);
 
   // Filter & Search states
@@ -56,6 +56,11 @@ export default function TableMapScreen({ onBack, onOrderForTable }: TableMapScre
 
   const [mergeModalVisible, setMergeModalVisible] = useState(false);
   const [targetMergeTable, setTargetMergeTable] = useState<string>('');
+
+  // Discount config modal
+  const [discountModalVisible, setDiscountModalVisible] = useState(false);
+  const [selectedDiscountTable, setSelectedDiscountTable] = useState<string>('Grab');
+  const [discountInputPercent, setDiscountInputPercent] = useState<string>('20');
 
   // Bill preview modal
   const [billOrder, setBillOrder] = useState<Order | null>(null);
@@ -177,6 +182,24 @@ export default function TableMapScreen({ onBack, onOrderForTable }: TableMapScre
     setSelectedTable(null);
   };
 
+  const handleOpenDiscountModal = (table?: string) => {
+    const target = table || selectedDiscountTable || 'Grab';
+    setSelectedDiscountTable(target);
+    setDiscountInputPercent(String(tableDiscounts[target] ?? (target === 'Grab' ? 20 : target === 'ShopeeFood' ? 25 : 0)));
+    setDiscountModalVisible(true);
+  };
+
+  const handleSaveDiscount = async () => {
+    const percent = parseInt(discountInputPercent.replace(/[^0-9]/g, ''), 10);
+    if (isNaN(percent) || percent < 0 || percent > 100) {
+      Alert.alert('Lỗi', 'Vui lòng nhập phần trăm chiết khấu từ 0% đến 100%');
+      return;
+    }
+    await setTableDiscount(selectedDiscountTable, percent);
+    showToast(`Đã lưu chiết khấu ${selectedDiscountTable}: ${percent}%`);
+    setDiscountModalVisible(false);
+  };
+
   // Grid column calculation
   const numColumns = isTablet ? (isLandscape ? 4 : 3) : 2;
   const cardWidthPercent = numColumns === 4 ? '23.5%' : numColumns === 3 ? '31.3%' : '48%';
@@ -196,6 +219,13 @@ export default function TableMapScreen({ onBack, onOrderForTable }: TableMapScre
               Quản lý trạng thái bàn, chuyển bàn & gộp bàn
             </Text>
           </View>
+          <TouchableOpacity
+            onPress={() => handleOpenDiscountModal()}
+            style={[styles.headerDiscountBtn, { backgroundColor: colors.backgroundElement, borderColor: '#F59E0B' }]}
+          >
+            <Ionicons name="pricetag-outline" size={16} color="#D97706" />
+            <Text style={styles.headerDiscountBtnText}>Chiết khấu %</Text>
+          </TouchableOpacity>
         </View>
 
         {/* Summary Stats Row */}
@@ -294,6 +324,8 @@ export default function TableMapScreen({ onBack, onOrderForTable }: TableMapScre
                 (sum, o) => sum + o.items.reduce((s, i) => s + i.quantity, 0),
                 0
               );
+              const tableIcon = table === 'Grab' ? '🛵' : table === 'ShopeeFood' ? '🛍️' : table === 'Mang về' ? '🥡' : table === 'Vỉa hè' ? '⛱️' : '📍';
+              const tableDiscount = tableDiscounts[table] || 0;
 
               return (
                 <TouchableOpacity
@@ -319,9 +351,35 @@ export default function TableMapScreen({ onBack, onOrderForTable }: TableMapScre
                 >
                   {/* Card Top Row: Table Name & Status */}
                   <View style={styles.cardHeaderRow}>
-                    <Text style={[styles.tableCardName, { color: colors.text }, isTablet && { fontSize: 18 }]}>
-                      📍 {table}
-                    </Text>
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, flexWrap: 'wrap', flex: 1, marginRight: 4 }}>
+                      <Text style={[styles.tableCardName, { color: colors.text }, isTablet && { fontSize: 18 }]}>
+                        {tableIcon} {table}
+                      </Text>
+                      {tableDiscount > 0 && (
+                        <TouchableOpacity
+                          onPress={(e) => {
+                            e.stopPropagation?.();
+                            handleOpenDiscountModal(table);
+                          }}
+                          style={{
+                            flexDirection: 'row',
+                            alignItems: 'center',
+                            backgroundColor: table === 'Grab' ? '#ECFDF5' : table === 'ShopeeFood' ? '#FFFBEB' : '#FEF3C7',
+                            borderColor: table === 'Grab' ? '#A7F3D0' : table === 'ShopeeFood' ? '#FDE68A' : '#FCD34D',
+                            borderWidth: 1,
+                            borderRadius: 6,
+                            paddingHorizontal: 5,
+                            paddingVertical: 1,
+                            gap: 2,
+                          }}
+                        >
+                          <Ionicons name="pricetag" size={10} color={table === 'Grab' ? '#059669' : '#D97706'} />
+                          <Text style={{ fontSize: 10, fontWeight: '700', color: table === 'Grab' ? '#059669' : '#D97706' }}>
+                            -{tableDiscount}%
+                          </Text>
+                        </TouchableOpacity>
+                      )}
+                    </View>
                     {isOccupied ? (
                       <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
                         {primaryOrder && <OrderTimeBadge order={primaryOrder} now={now} compact />}
@@ -474,12 +532,46 @@ export default function TableMapScreen({ onBack, onOrderForTable }: TableMapScre
                 </ScrollView>
 
                 {/* Total Row */}
-                <View style={[styles.detailTotalRow, { borderTopColor: colors.border }]}>
-                  <Text style={[styles.detailTotalLabel, { color: colors.text }]}>Tổng tiền bàn:</Text>
-                  <Text style={[styles.detailTotalValue, { color: colors.primary }]}>
-                    {formatPrice(selectedTableTotal)}
-                  </Text>
-                </View>
+                {(() => {
+                  const tableSubtotal = selectedTableOrders.reduce((sum, o) => sum + (o.subtotal || o.total), 0);
+                  const tableDiscountAmount = selectedTableOrders.reduce((sum, o) => sum + (o.discountAmount || 0), 0);
+                  const firstWithDiscount = selectedTableOrders.find((o) => o.discountPercent);
+                  const discountPct = firstWithDiscount?.discountPercent || (selectedTable ? (tableDiscounts[selectedTable] || 0) : 0);
+
+                  return (
+                    <View style={[styles.detailTotalRow, { borderTopColor: colors.border, flexDirection: 'column', gap: 4 }]}>
+                      {tableDiscountAmount > 0 ? (
+                        <>
+                          <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+                            <Text style={{ color: colors.textSecondary, fontSize: 13 }}>Tạm tính:</Text>
+                            <Text style={{ color: colors.text, fontSize: 13 }}>{formatPrice(tableSubtotal)}</Text>
+                          </View>
+                          <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+                            <Text style={{ color: '#D97706', fontSize: 13, fontWeight: '600' }}>
+                              Chiết khấu đối tác ({discountPct}%):
+                            </Text>
+                            <Text style={{ color: '#D97706', fontSize: 13, fontWeight: '600' }}>
+                              -{formatPrice(tableDiscountAmount)}
+                            </Text>
+                          </View>
+                          <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: 4 }}>
+                            <Text style={[styles.detailTotalLabel, { color: colors.text }]}>Thực thu (Tổng tiền):</Text>
+                            <Text style={[styles.detailTotalValue, { color: colors.primary }]}>
+                              {formatPrice(selectedTableTotal)}
+                            </Text>
+                          </View>
+                        </>
+                      ) : (
+                        <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+                          <Text style={[styles.detailTotalLabel, { color: colors.text }]}>Tổng tiền bàn:</Text>
+                          <Text style={[styles.detailTotalValue, { color: colors.primary }]}>
+                            {formatPrice(selectedTableTotal)}
+                          </Text>
+                        </View>
+                      )}
+                    </View>
+                  );
+                })()}
 
                 {/* Actions Button Grid */}
                 <View style={styles.detailActionsGrid}>
@@ -737,9 +829,28 @@ export default function TableMapScreen({ onBack, onOrderForTable }: TableMapScre
 
                   <View style={styles.billDashedLine} />
 
+                  {/* Subtotal & Discount if applicable */}
+                  {billOrder.discountAmount && billOrder.discountAmount > 0 ? (
+                    <>
+                      <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginVertical: 3 }}>
+                        <Text style={{ fontSize: 13, color: '#666' }}>Tạm tính:</Text>
+                        <Text style={{ fontSize: 13, color: '#111' }}>{formatPrice(billOrder.subtotal || (billOrder.total + billOrder.discountAmount))}</Text>
+                      </View>
+                      <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginVertical: 3 }}>
+                        <Text style={{ fontSize: 13, color: '#D97706', fontWeight: '600' }}>
+                          Chiết khấu đối tác ({billOrder.discountPercent}%):
+                        </Text>
+                        <Text style={{ fontSize: 13, color: '#D97706', fontWeight: '600' }}>
+                          -{formatPrice(billOrder.discountAmount)}
+                        </Text>
+                      </View>
+                      <View style={styles.billDashedLine} />
+                    </>
+                  ) : null}
+
                   {/* Total */}
                   <View style={styles.billTotalRow}>
-                    <Text style={styles.billTotalLabel}>TỔNG CỘNG:</Text>
+                    <Text style={styles.billTotalLabel}>THỰC THU / TỔNG CỘNG:</Text>
                     <Text style={styles.billTotalValue}>{formatPrice(billOrder.total)}</Text>
                   </View>
 
@@ -762,6 +873,113 @@ export default function TableMapScreen({ onBack, onOrderForTable }: TableMapScre
                   </View>
                 </View>
               </ScrollView>
+            </View>
+          </Modal>
+        )}
+
+        {/* ── Modal Cấu Hình Chiết Khấu Bàn ─────────────────────────── */}
+        {discountModalVisible && (
+          <Modal
+            visible
+            animationType="fade"
+            transparent
+            onRequestClose={() => setDiscountModalVisible(false)}
+          >
+            <View style={styles.modalOverlay}>
+              <View style={[styles.dialogCard, { backgroundColor: colors.background }]}>
+                <View style={styles.dialogHeader}>
+                  <Ionicons name="pricetag" size={24} color="#D97706" />
+                  <Text style={[styles.dialogTitle, { color: colors.text }]}>Cài Đặt Chiết Khấu Bàn</Text>
+                </View>
+
+                <Text style={[styles.dialogDesc, { color: colors.textSecondary }]}>
+                  Cấu hình % chiết khấu (hoa hồng) trừ trực tiếp vào doanh thu khi bán tại bàn / ứng dụng này.
+                </Text>
+
+                {/* Chọn bàn */}
+                <Text style={[styles.pickerLabel, { color: colors.textSecondary }]}>Chọn bàn / đối tác:</Text>
+                <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ maxHeight: 50, marginBottom: 12 }}>
+                  <View style={{ flexDirection: 'row', gap: 8 }}>
+                    {allTables.map((t) => {
+                      const isSelected = selectedDiscountTable === t;
+                      const curPercent = tableDiscounts[t] || 0;
+                      return (
+                        <TouchableOpacity
+                          key={t}
+                          onPress={() => {
+                            setSelectedDiscountTable(t);
+                            setDiscountInputPercent(String(curPercent));
+                          }}
+                          style={[
+                            styles.tablePickChip,
+                            {
+                              backgroundColor: isSelected ? '#D97706' : colors.backgroundElement,
+                              borderColor: isSelected ? '#D97706' : colors.border,
+                            },
+                          ]}
+                        >
+                          <Text style={{ color: isSelected ? '#FFF' : colors.text, fontWeight: '600', fontSize: 13 }}>
+                            {t === 'Grab' ? '🛵 ' : t === 'ShopeeFood' ? '🛍️ ' : ''}{t}
+                            {curPercent > 0 ? ` (${curPercent}%)` : ''}
+                          </Text>
+                        </TouchableOpacity>
+                      );
+                    })}
+                  </View>
+                </ScrollView>
+
+                {/* Nhập % chiết khấu */}
+                <Text style={[styles.pickerLabel, { color: colors.textSecondary }]}>
+                  Phần trăm chiết khấu cho <Text style={{ fontWeight: 'bold', color: colors.text }}>{selectedDiscountTable}</Text> (%):
+                </Text>
+                <TextInput
+                  placeholder="Nhập số % (Ví dụ: 20, 25...)"
+                  placeholderTextColor={colors.textSecondary}
+                  value={discountInputPercent}
+                  onChangeText={setDiscountInputPercent}
+                  keyboardType="numeric"
+                  style={[styles.dialogInput, { color: colors.text, borderColor: colors.border }]}
+                />
+
+                {/* Các nút bấm nhanh % */}
+                <View style={{ flexDirection: 'row', gap: 6, marginBottom: 16, flexWrap: 'wrap' }}>
+                  {['0', '15', '20', '25', '28', '30'].map((pct) => (
+                    <TouchableOpacity
+                      key={pct}
+                      onPress={() => setDiscountInputPercent(pct)}
+                      style={{
+                        paddingHorizontal: 10,
+                        paddingVertical: 5,
+                        borderRadius: 6,
+                        backgroundColor: discountInputPercent === pct ? '#D97706' : colors.backgroundElement,
+                        borderWidth: 1,
+                        borderColor: discountInputPercent === pct ? '#D97706' : colors.border,
+                      }}
+                    >
+                      <Text style={{ fontSize: 12, fontWeight: '600', color: discountInputPercent === pct ? '#FFF' : colors.text }}>
+                        {pct}%
+                      </Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+
+                {/* Nút hành động */}
+                <View style={styles.dialogActionsRow}>
+                  <TouchableOpacity
+                    onPress={() => setDiscountModalVisible(false)}
+                    style={[styles.dialogBtn, { backgroundColor: colors.border }]}
+                  >
+                    <Text style={[styles.dialogBtnText, { color: colors.textSecondary }]}>Hủy</Text>
+                  </TouchableOpacity>
+
+                  <TouchableOpacity
+                    onPress={handleSaveDiscount}
+                    style={[styles.dialogBtn, { backgroundColor: '#D97706' }]}
+                  >
+                    <Text style={[styles.dialogBtnText, { color: '#FFF' }]}>Lưu cài đặt</Text>
+                  </TouchableOpacity>
+                </View>
+              </View>
             </View>
           </Modal>
         )}
@@ -799,6 +1017,21 @@ const styles = StyleSheet.create({
   headerSubtitle: {
     fontSize: 12,
     marginTop: 2,
+  },
+  headerDiscountBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 10,
+    borderWidth: 1,
+    marginLeft: 8,
+  },
+  headerDiscountBtnText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#D97706',
+    marginLeft: 4,
   },
   summaryRow: {
     flexDirection: 'row',

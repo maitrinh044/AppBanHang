@@ -17,6 +17,7 @@ import {
 import { Ionicons } from '@expo/vector-icons';
 import { Colors, Spacing } from '../constants/theme';
 import { useCart } from '../context/CartContext';
+import { DEFAULT_TABLES } from '../constants/tables';
 
 const formatPrice = (price?: number | null) => {
   return (Number(price) || 0).toLocaleString('vi-VN') + ' đ';
@@ -27,11 +28,7 @@ const getShortName = (name: string) => {
   return short.charAt(0).toUpperCase() + short.slice(1);
 };
 
-const TABLE_OPTIONS = [
-  ...Array.from({ length: 14 }, (_, i) => `Bàn ${i + 1}`),
-  'Mang về',
-  'Vỉa hè'
-];
+const TABLE_OPTIONS = DEFAULT_TABLES;
 
 interface AddOrderScreenProps {
   onBack: (successMsg?: string) => void;
@@ -44,7 +41,7 @@ export default function AddOrderScreen({ onBack, initialTable }: AddOrderScreenP
   const { width, height } = useWindowDimensions();
   const isLandscape = width > height;
   
-  const { menuItems, addOrder, getDishRemainingStock } = useCart();
+  const { menuItems, addOrder, getDishRemainingStock, tableDiscounts } = useCart();
 
   const [step, setStep] = useState<'table' | 'food'>(initialTable ? 'food' : 'table');
   const [tableNumber, setTableNumber] = useState(initialTable || '');
@@ -173,7 +170,8 @@ export default function AddOrderScreen({ onBack, initialTable }: AddOrderScreenP
     if (isSubmitting) return;
     setIsSubmitting(true);
     try {
-      await addOrder(tableLabel, selected, finalNote);
+      // Lưu local ngay → quay về màn hình chính. Firebase ghi tiếp ở background.
+      addOrder(tableLabel, selected, finalNote).catch(console.error);
       onBack(`Đã lưu đơn hàng ${tableLabel} thành công!`);
     } catch (err) {
       console.error('Lỗi khi lưu đơn hàng:', err);
@@ -182,7 +180,11 @@ export default function AddOrderScreen({ onBack, initialTable }: AddOrderScreenP
     }
   };
 
-  const totalAmount = calculateTotal();
+  const subtotalAmount = calculateTotal();
+  const activeTableLabel = tableNumber.trim() !== '' ? tableNumber.trim() : 'Mang về';
+  const tableDiscountPercent = tableDiscounts[activeTableLabel] || 0;
+  const tableDiscountAmount = Math.round((subtotalAmount * tableDiscountPercent) / 100);
+  const totalAmount = Math.max(0, subtotalAmount - tableDiscountAmount);
   const selectedItemsCount = getSelectedItems().reduce((sum, item) => sum + item.quantity, 0);
 
   const handleBack = () => {
@@ -204,6 +206,7 @@ export default function AddOrderScreen({ onBack, initialTable }: AddOrderScreenP
       <View style={styles.gridContainer}>
         {TABLE_OPTIONS.map((label) => {
           const isSelected = tableNumber === label;
+          const discountPct = tableDiscounts[label] || 0;
           return (
             <View key={label} style={[styles.gridItem, { width: `${100 / tableCols}%` }]}>
               <TouchableOpacity
@@ -222,6 +225,23 @@ export default function AddOrderScreen({ onBack, initialTable }: AddOrderScreenP
                 ]}>
                   {label}
                 </Text>
+                {discountPct > 0 && (
+                  <View style={{
+                    marginTop: 4,
+                    paddingHorizontal: 6,
+                    paddingVertical: 2,
+                    borderRadius: 6,
+                    backgroundColor: isSelected ? 'rgba(255,255,255,0.25)' : '#FEF3C7',
+                  }}>
+                    <Text style={{
+                      fontSize: 10,
+                      fontWeight: '700',
+                      color: isSelected ? '#FFF' : '#D97706',
+                    }}>
+                      CK {discountPct}%
+                    </Text>
+                  </View>
+                )}
               </TouchableOpacity>
             </View>
           );
@@ -527,10 +547,29 @@ export default function AddOrderScreen({ onBack, initialTable }: AddOrderScreenP
 
             {/* Total + Save */}
             <View style={[styles.cartFooter, { borderTopColor: colors.border }]}>
-              <Text style={{ color: colors.textSecondary, fontSize: 11 }}>Tổng cộng</Text>
-              <Text style={{ color: colors.primary, fontWeight: 'bold', fontSize: 16, marginBottom: 8 }}>
-                {formatPrice(totalAmount)}
-              </Text>
+              {tableDiscountPercent > 0 ? (
+                <View style={{ marginBottom: 8 }}>
+                  <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 2 }}>
+                    <Text style={{ color: colors.textSecondary, fontSize: 11 }}>Tạm tính:</Text>
+                    <Text style={{ color: colors.textSecondary, fontSize: 11 }}>{formatPrice(subtotalAmount)}</Text>
+                  </View>
+                  <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 2 }}>
+                    <Text style={{ color: '#D97706', fontSize: 11, fontWeight: '600' }}>Chiết khấu ({tableDiscountPercent}%):</Text>
+                    <Text style={{ color: '#D97706', fontSize: 11, fontWeight: '600' }}>-{formatPrice(tableDiscountAmount)}</Text>
+                  </View>
+                  <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'baseline' }}>
+                    <Text style={{ color: colors.text, fontSize: 12, fontWeight: 'bold' }}>Thực thu:</Text>
+                    <Text style={{ color: colors.primary, fontWeight: 'bold', fontSize: 16 }}>{formatPrice(totalAmount)}</Text>
+                  </View>
+                </View>
+              ) : (
+                <>
+                  <Text style={{ color: colors.textSecondary, fontSize: 11 }}>Tổng cộng</Text>
+                  <Text style={{ color: colors.primary, fontWeight: 'bold', fontSize: 16, marginBottom: 8 }}>
+                    {formatPrice(totalAmount)}
+                  </Text>
+                </>
+              )}
               <TouchableOpacity
                 onPress={handleSaveOrder}
                 style={[styles.saveBtn, { backgroundColor: colors.primary, justifyContent: 'center' }]}
@@ -605,8 +644,20 @@ export default function AddOrderScreen({ onBack, initialTable }: AddOrderScreenP
         {/* Bottom Total & Save action bar */}
         <View style={[styles.footer, { backgroundColor: colors.backgroundElement, borderTopColor: colors.border }]}>
           <View style={styles.totalContainer}>
-            <Text style={{ color: colors.textSecondary, fontSize: 12 }}>Đã chọn {selectedItemsCount} món</Text>
-            <Text style={{ color: colors.primary, fontWeight: 'bold', fontSize: 18 }}>{formatPrice(totalAmount)}</Text>
+            {tableDiscountPercent > 0 ? (
+              <View>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                  <Text style={{ color: colors.textSecondary, fontSize: 11 }}>Tạm tính: {formatPrice(subtotalAmount)}</Text>
+                  <Text style={{ color: '#D97706', fontSize: 11, fontWeight: '700' }}>CK ({tableDiscountPercent}%): -{formatPrice(tableDiscountAmount)}</Text>
+                </View>
+                <Text style={{ color: colors.primary, fontWeight: 'bold', fontSize: 18 }}>Thực thu: {formatPrice(totalAmount)}</Text>
+              </View>
+            ) : (
+              <>
+                <Text style={{ color: colors.textSecondary, fontSize: 12 }}>Đã chọn {selectedItemsCount} món</Text>
+                <Text style={{ color: colors.primary, fontWeight: 'bold', fontSize: 18 }}>{formatPrice(totalAmount)}</Text>
+              </>
+            )}
           </View>
           <TouchableOpacity
             onPress={handleSaveOrder}

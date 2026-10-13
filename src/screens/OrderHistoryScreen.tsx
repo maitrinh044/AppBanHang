@@ -50,7 +50,7 @@ export default function OrderHistoryScreen({ onBack }: OrderHistoryScreenProps) 
   const systemScheme = useColorScheme();
   const colors = Colors[systemScheme === 'dark' ? 'dark' : 'light'];
 
-  const { orders, updateOrderStatus, deleteOrder, updateOrderNote } = useCart();
+  const { orders, updateOrderStatus, deleteOrder, updateOrderNote, fetchOrdersByDateRange } = useCart();
   const now = useCurrentTime(15000);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
   const [editingNoteOrderId, setEditingNoteOrderId] = useState<string | null>(null);
@@ -65,6 +65,10 @@ export default function OrderHistoryScreen({ onBack }: OrderHistoryScreenProps) 
   const [endDate, setEndDate] = useState(new Date());
   const [showStartDatePicker, setShowStartDatePicker] = useState(false);
   const [showEndDatePicker, setShowEndDatePicker] = useState(false);
+
+  // Đơn hàng tải theo khoảng ngày từ Firestore
+  const [rangeOrders, setRangeOrders] = useState<Order[] | null>(null);
+  const [isLoadingRange, setIsLoadingRange] = useState(false);
 
   // Export modal
   const [showExportModal, setShowExportModal] = useState(false);
@@ -82,6 +86,38 @@ export default function OrderHistoryScreen({ onBack }: OrderHistoryScreenProps) 
   useEffect(() => {
     setVisibleCount(20); // Reset phân trang khi thay đổi bộ lọc
   }, [filterType, startDate, endDate, searchTableQuery]);
+
+  // Tự động tải đơn hàng từ Firestore khi chọn tab "Theo khoảng ngày"
+  useEffect(() => {
+    let isMounted = true;
+    if (filterType !== 'range') {
+      setRangeOrders(null);
+      setIsLoadingRange(false);
+      return;
+    }
+
+    const loadRange = async () => {
+      setIsLoadingRange(true);
+      try {
+        const fetched = await fetchOrdersByDateRange(startDate, endDate);
+        if (isMounted) {
+          setRangeOrders(fetched);
+        }
+      } catch (err) {
+        console.error("Lỗi khi tải lịch sử đơn hàng theo khoảng ngày:", err);
+      } finally {
+        if (isMounted) {
+          setIsLoadingRange(false);
+        }
+      }
+    };
+
+    loadRange();
+
+    return () => {
+      isMounted = false;
+    };
+  }, [filterType, startDate, endDate]);
 
   const isCloseToBottom = ({ layoutMeasurement, contentOffset, contentSize }: any) => {
     const paddingToBottom = 100;
@@ -124,8 +160,26 @@ export default function OrderHistoryScreen({ onBack }: OrderHistoryScreenProps) 
 
   const handleExportExcel = async () => {
     try {
+      showToast('Đang chuẩn bị dữ liệu xuất Excel...');
+
+      let sourceOrders: Order[] = orders;
+
+      if (exportFilterType === 'day') {
+        sourceOrders = await fetchOrdersByDateRange(exportStartDate, exportStartDate);
+      } else if (exportFilterType === 'range') {
+        sourceOrders = await fetchOrdersByDateRange(exportStartDate, exportEndDate);
+      } else if (exportFilterType === 'month') {
+        const start = new Date(exportYear, exportMonth - 1, 1);
+        const end = new Date(exportYear, exportMonth, 0);
+        sourceOrders = await fetchOrdersByDateRange(start, end);
+      } else if (exportFilterType === 'year') {
+        const start = new Date(exportYear, 0, 1);
+        const end = new Date(exportYear, 11, 31);
+        sourceOrders = await fetchOrdersByDateRange(start, end);
+      }
+
       // Đơn đã xóa mềm không xuất ra Excel (đã chuyển vào Thùng rác)
-      let filtered = orders.filter((o) => !o.isDeleted).slice();
+      let filtered = sourceOrders.filter((o) => !o.isDeleted).slice();
 
       if (exportFilterType === 'day') {
         const d = exportStartDate;
@@ -318,8 +372,9 @@ export default function OrderHistoryScreen({ onBack }: OrderHistoryScreenProps) 
 
   const getFilteredAndSortedOrders = () => {
     // Đơn đã xóa mềm ẩn hoàn toàn khỏi lịch sử (vào Thùng rác thay thế)
-    // Doanh thu của đơn paid+deleted vẫn được tính riêng ở màn hình Báo cáo
-    let filtered = orders.filter((o) => !o.isDeleted).slice();
+    // Khi chọn 'range', dùng rangeOrders đã tải từ Firestore theo khoảng ngày
+    const sourceOrders = filterType === 'range' ? (rangeOrders ?? orders) : orders;
+    let filtered = sourceOrders.filter((o) => !o.isDeleted).slice();
 
     if (searchTableQuery.trim() !== '') {
       const query = searchTableQuery.trim().toLowerCase();
@@ -461,7 +516,15 @@ export default function OrderHistoryScreen({ onBack }: OrderHistoryScreenProps) 
           title="Chọn ngày kết thúc"
         />
 
-        {orders.length === 0 ? (
+        {/* Loading indicator khi tải khoảng ngày từ Firestore */}
+        {isLoadingRange && (
+          <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', paddingVertical: 8, gap: 8 }}>
+            <ActivityIndicator size="small" color={colors.primary} />
+            <Text style={{ fontSize: 13, color: colors.textSecondary }}>Đang tải đơn hàng trong khoảng ngày...</Text>
+          </View>
+        )}
+
+        {getFilteredAndSortedOrders().length === 0 ? (
           <View style={styles.emptyContainer}>
             <Ionicons name="receipt-outline" size={80} color={colors.textSecondary} style={{ opacity: 0.4, marginBottom: 12 }} />
             <Text style={[styles.emptyText, { color: colors.textSecondary }]}>Chưa có đơn hàng nào được tạo.</Text>
@@ -598,10 +661,33 @@ export default function OrderHistoryScreen({ onBack }: OrderHistoryScreenProps) 
 
                       {/* Total Row */}
                       <View style={styles.totalRow}>
-                        <Text style={[styles.totalLabel, { color: colors.text }]}>Tổng tiền:</Text>
-                        <Text style={[styles.totalValue, { color: colors.primary }]}>
-                          {formatPrice(order.total)}
-                        </Text>
+                        {order.discountAmount && order.discountAmount > 0 ? (
+                          <View style={{ flex: 1 }}>
+                            <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 2 }}>
+                              <Text style={{ fontSize: 12, color: colors.textSecondary }}>Tạm tính:</Text>
+                              <Text style={{ fontSize: 12, color: colors.textSecondary }}>{formatPrice(order.subtotal || (order.total + order.discountAmount))}</Text>
+                            </View>
+                            <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 4 }}>
+                              <Text style={{ fontSize: 12, color: '#D97706', fontWeight: '600' }}>
+                                Chiết khấu ({order.discountPercent}%):
+                              </Text>
+                              <Text style={{ fontSize: 12, color: '#D97706', fontWeight: '600' }}>
+                                -{formatPrice(order.discountAmount)}
+                              </Text>
+                            </View>
+                            <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+                              <Text style={[styles.totalLabel, { color: colors.text }]}>Thực thu:</Text>
+                              <Text style={[styles.totalValue, { color: colors.primary }]}>{formatPrice(order.total)}</Text>
+                            </View>
+                          </View>
+                        ) : (
+                          <>
+                            <Text style={[styles.totalLabel, { color: colors.text }]}>Tổng tiền:</Text>
+                            <Text style={[styles.totalValue, { color: colors.primary }]}>
+                              {formatPrice(order.total)}
+                            </Text>
+                          </>
+                        )}
                       </View>
 
                       {/* Status + Bill Row */}
@@ -729,9 +815,25 @@ export default function OrderHistoryScreen({ onBack }: OrderHistoryScreenProps) 
                     </View>
                   ))}
                 </View>
-                <View style={styles.billDashedLine} />
+                {billOrder.discountAmount && billOrder.discountAmount > 0 ? (
+                  <>
+                    <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginVertical: 3 }}>
+                      <Text style={{ fontSize: 13, color: '#666' }}>Tạm tính:</Text>
+                      <Text style={{ fontSize: 13, color: '#111' }}>{(Number(billOrder.subtotal || (billOrder.total + billOrder.discountAmount)) || 0).toLocaleString('vi-VN')} đ</Text>
+                    </View>
+                    <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginVertical: 3 }}>
+                      <Text style={{ fontSize: 13, color: '#D97706', fontWeight: '600' }}>
+                        Chiết khấu đối tác ({billOrder.discountPercent}%):
+                      </Text>
+                      <Text style={{ fontSize: 13, color: '#D97706', fontWeight: '600' }}>
+                        -{(Number(billOrder.discountAmount) || 0).toLocaleString('vi-VN')} đ
+                      </Text>
+                    </View>
+                    <View style={styles.billDashedLine} />
+                  </>
+                ) : null}
                 <View style={styles.billTotalRow}>
-                  <Text style={styles.billTotalLabel}>TỔNG CỘNG</Text>
+                  <Text style={styles.billTotalLabel}>THỰC THU / TỔNG CỘNG</Text>
                   <Text style={styles.billTotalValue}>{(Number(billOrder.total) || 0).toLocaleString('vi-VN')} đ</Text>
                 </View>
                 <View style={styles.billDashedLine} />

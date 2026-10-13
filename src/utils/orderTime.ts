@@ -26,9 +26,10 @@ export function getOrderTimestampMs(order: { createdAt?: number; timestamp?: str
   }
   if (order.timestamp) {
     const str = String(order.timestamp).trim();
-    const nativeTime = new Date(str).getTime();
-    if (!isNaN(nativeTime)) return nativeTime;
 
+    // 1. Luôn ưu tiên định dạng chuẩn Việt Nam: dd/MM/yyyy (ví dụ: "14:30:00 01/09/2026" hoặc "01/09/2026")
+    // KHÔNG BAO GIỜ dùng new Date(str) trước vì JavaScript coi ký tự '/' là MM/dd/yyyy theo chuẩn Mỹ,
+    // làm đảo lộn ngày 1-12 thành các tháng 1-12 trong năm!
     const dateMatch = str.match(/(\d{1,2})\/(\d{1,2})\/(\d{4})/);
     const timeMatch = str.match(/(\d{1,2}):(\d{1,2})(?::(\d{1,2}))?/);
 
@@ -50,6 +51,23 @@ export function getOrderTimestampMs(order: { createdAt?: number; timestamp?: str
       const d = new Date(year, month, day, hours, minutes, seconds);
       if (!isNaN(d.getTime())) return d.getTime();
     }
+
+    // 2. Định dạng có dấu gạch ngang: yyyy-MM-dd hoặc dd-MM-yyyy
+    const dashMatch = str.match(/(\d{4})-(\d{1,2})-(\d{1,2})/);
+    if (dashMatch) {
+      const year = parseInt(dashMatch[1], 10);
+      const month = parseInt(dashMatch[2], 10) - 1;
+      const day = parseInt(dashMatch[3], 10);
+      let hours = timeMatch ? parseInt(timeMatch[1], 10) : 0;
+      const minutes = timeMatch ? parseInt(timeMatch[2], 10) : 0;
+      const seconds = timeMatch && timeMatch[3] ? parseInt(timeMatch[3], 10) : 0;
+      const d = new Date(year, month, day, hours, minutes, seconds);
+      if (!isNaN(d.getTime())) return d.getTime();
+    }
+
+    // 3. Fallback cho chuỗi ISO 8601 hợp lệ
+    const nativeTime = new Date(str).getTime();
+    if (!isNaN(nativeTime)) return nativeTime;
   }
   return 0;
 }

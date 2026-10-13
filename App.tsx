@@ -19,9 +19,9 @@ import { db } from './src/config/firebase';
 import { doc, onSnapshot } from 'firebase/firestore';
 import { STAFF_PASSWORD, MANAGER_PASSWORD } from './src/config/auth';
 import ChangePasswordScreen from './src/screens/ChangePasswordScreen';
-import TrashOrdersScreen from './src/screens/TrashOrdersScreen';
+import DiscountConfigScreen from './src/screens/DiscountConfigScreen';
 
-type ScreenName = 'dashboard' | 'add_order' | 'table_map' | 'manage_dishes' | 'history' | 'active_orders' | 'unpaid_orders' | 'revenue_stats' | 'change_password' | 'trash_orders';
+type ScreenName = 'dashboard' | 'add_order' | 'table_map' | 'manage_dishes' | 'history' | 'active_orders' | 'unpaid_orders' | 'revenue_stats' | 'change_password' | 'discount_config';
 
 function AppContent() {
   const systemScheme = useColorScheme();
@@ -133,7 +133,7 @@ function AppContent() {
             onNavigateToUnpaidOrders={() => setActiveScreen('unpaid_orders')}
             onNavigateToRevenueStats={() => isManager ? setActiveScreen('revenue_stats') : null}
             onNavigateToChangePassword={() => isManager ? setActiveScreen('change_password') : null}
-            onNavigateToTrashOrders={() => isManager ? setActiveScreen('trash_orders') : null}
+            onNavigateToDiscountConfig={() => isManager ? setActiveScreen('discount_config') : null}
             onLogout={handleConfirmLogout}
           />
         );
@@ -179,9 +179,9 @@ function AppContent() {
             onBack={() => setActiveScreen('dashboard')}
           />
         );
-      case 'trash_orders':
+      case 'discount_config':
         if (!isManager) return null;
-        return <TrashOrdersScreen onBack={() => setActiveScreen('dashboard')} />;
+        return <DiscountConfigScreen onBack={() => setActiveScreen('dashboard')} />;
       default:
         return (
           <HomeScreen
@@ -197,7 +197,7 @@ function AppContent() {
             onNavigateToUnpaidOrders={() => setActiveScreen('unpaid_orders')}
             onNavigateToRevenueStats={() => isManager ? setActiveScreen('revenue_stats') : null}
             onNavigateToChangePassword={() => isManager ? setActiveScreen('change_password') : null}
-            onNavigateToTrashOrders={() => isManager ? setActiveScreen('trash_orders') : null}
+            onNavigateToDiscountConfig={() => isManager ? setActiveScreen('discount_config') : null}
             onLogout={handleConfirmLogout}
           />
         );

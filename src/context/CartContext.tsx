@@ -1,8 +1,9 @@
 import React, { createContext, useContext, useState, useEffect, useMemo } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { MENU_ITEMS, MenuItem } from '../constants/menu';
+import { DEFAULT_TABLE_DISCOUNTS } from '../constants/tables';
 import { getDemoOrders, getDemoExpenses } from '../constants/demoData';
-import { formatOrderTimestamp } from '../utils/orderTime';
+import { formatOrderTimestamp, getOrderTimestampMs } from '../utils/orderTime';
 import { db } from '../config/firebase';
 import {
   collection,
@@ -16,6 +17,7 @@ import {
   orderBy,
   limit,
   getDocs,
+  where,
 } from 'firebase/firestore';
 
 export interface OrderItem {
@@ -33,13 +35,16 @@ export interface Order {
   id: string;
   tableNumber: string;
   items: OrderItem[];
-  total: number;
+  total: number; // Tổng thực thu sau khi trừ chiết khấu (tính vào doanh thu)
   status: OrderStatus;
   timestamp: string;
   note?: string;
   createdAt?: number;
   isDeleted?: boolean;
   deletedAt?: number;
+  subtotal?: number; // Tổng tiền món trước chiết khấu
+  discountPercent?: number; // % chiết khấu của bàn
+  discountAmount?: number; // Số tiền được giảm giá
 }
 
 export interface Expense {
@@ -74,6 +79,10 @@ interface CartContextType {
   addExpense: (name: string, amount: number, customDate?: Date) => Promise<void>;
   deleteExpense: (id: string) => Promise<void>;
   editExpense: (id: string, name: string, amount: number, customDate?: Date) => Promise<void>;
+  fetchOrdersByDateRange: (startDate: Date, endDate: Date) => Promise<Order[]>;
+  fetchExpensesByDateRange: (startDate: Date, endDate: Date) => Promise<Expense[]>;
+  tableDiscounts: Record<string, number>;
+  setTableDiscount: (tableName: string, discountPercent: number) => Promise<void>;
   isDemoMode: boolean;
   resetDemoData: () => Promise<void>;
 }
@@ -85,11 +94,13 @@ const prefix = __DEV__ ? 'test_' : '';
 const MENU_ITEMS_COL = `${prefix}menu_items`;
 const ORDERS_COL = `${prefix}orders`;
 const EXPENSES_COL = `${prefix}expenses`;
+const TABLE_CONFIGS_COL = `${prefix}table_configs`;
 
 export const CartProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [menuItems, setMenuItems] = useState<MenuItem[]>(MENU_ITEMS);
   const [orders, setOrders] = useState<Order[]>([]);
   const [expenses, setExpenses] = useState<Expense[]>([]);
+  const [tableDiscounts, setTableDiscounts] = useState<Record<string, number>>(DEFAULT_TABLE_DISCOUNTS);
   const [isLoaded, setIsLoaded] = useState(false);
 
   // Tự động lưu vào AsyncStorage khi chạy ở chế độ Offline / Demo
@@ -111,6 +122,12 @@ export const CartProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   }, [menuItems, isLoaded]);
 
+  useEffect(() => {
+    if (!db && isLoaded) {
+      AsyncStorage.setItem('@pos_table_discounts', JSON.stringify(tableDiscounts)).catch(console.error);
+    }
+  }, [tableDiscounts, isLoaded]);
+
   // Load data and set up listeners
   useEffect(() => {
     if (!db) {
@@ -120,12 +137,20 @@ export const CartProvider: React.FC<{ children: React.ReactNode }> = ({ children
           const cachedMenu = await AsyncStorage.getItem('@pos_menu_items');
           const cachedOrders = await AsyncStorage.getItem('@pos_orders');
           const cachedExpenses = await AsyncStorage.getItem('@pos_expenses');
+          const cachedDiscounts = await AsyncStorage.getItem('@pos_table_discounts');
           
           if (cachedMenu !== null) {
             setMenuItems(JSON.parse(cachedMenu));
           } else {
             setMenuItems(MENU_ITEMS);
             await AsyncStorage.setItem('@pos_menu_items', JSON.stringify(MENU_ITEMS));
+          }
+
+          if (cachedDiscounts !== null) {
+            setTableDiscounts(JSON.parse(cachedDiscounts));
+          } else {
+            setTableDiscounts(DEFAULT_TABLE_DISCOUNTS);
+            await AsyncStorage.setItem('@pos_table_discounts', JSON.stringify(DEFAULT_TABLE_DISCOUNTS));
           }
 
           if (cachedOrders !== null) {
@@ -157,8 +182,19 @@ export const CartProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
 
     // Firebase live listeners
-    console.log(`Setting up real-time Firebase listeners with collections: ${MENU_ITEMS_COL}, ${ORDERS_COL}`);
+    console.log(`Setting up real-time Firebase listeners with collections: ${MENU_ITEMS_COL}, ${ORDERS_COL}, ${TABLE_CONFIGS_COL}`);
     
+    // Subscribe to table_configs (discounts)
+    const unsubscribeDiscounts = onSnapshot(doc(db, TABLE_CONFIGS_COL, 'discounts'), (docSnap) => {
+      if (docSnap.exists()) {
+        const data = docSnap.data();
+        setTableDiscounts((prev) => ({
+          ...DEFAULT_TABLE_DISCOUNTS,
+          ...data,
+        }));
+      }
+    });
+
     // Subscribe to menu_items
     const unsubscribeMenu = onSnapshot(collection(db, MENU_ITEMS_COL), async (snapshot) => {
       if (snapshot.empty) {
@@ -213,6 +249,7 @@ export const CartProvider: React.FC<{ children: React.ReactNode }> = ({ children
     });
 
     return () => {
+      unsubscribeDiscounts();
       unsubscribeMenu();
       unsubscribeOrders();
       unsubscribeExpenses();
@@ -471,13 +508,20 @@ export const CartProvider: React.FC<{ children: React.ReactNode }> = ({ children
       })
       .filter((item): item is OrderItem => item !== null);
 
-    const total = orderItems.reduce((sum, item) => sum + item.price * item.quantity, 0);
+    const subtotal = orderItems.reduce((sum, item) => sum + item.price * item.quantity, 0);
+    const tableLabel = tableNumber.trim() !== '' ? tableNumber.trim() : 'Mang về';
+    const discountPercent = tableDiscounts[tableLabel] || 0;
+    const discountAmount = Math.round((subtotal * discountPercent) / 100);
+    const total = Math.max(0, subtotal - discountAmount);
 
     const orderCreatedAt = Date.now();
     const newOrder: Order = {
       id: `ORD-${Math.random().toString(36).substring(2, 8).toUpperCase()}`,
-      tableNumber: tableNumber.trim() !== '' ? tableNumber.trim() : 'Mang về',
+      tableNumber: tableLabel,
       items: orderItems,
+      subtotal,
+      discountPercent: discountPercent > 0 ? discountPercent : undefined,
+      discountAmount: discountAmount > 0 ? discountAmount : undefined,
       total,
       status: 'pending',
       note: note.trim() !== '' ? note.trim() : undefined,
@@ -503,6 +547,27 @@ export const CartProvider: React.FC<{ children: React.ReactNode }> = ({ children
         await setDoc(doc(db, ORDERS_COL, newOrder.id), cleanData);
       } catch (err) {
         console.error("Error saving order to Firebase:", err);
+      }
+    }
+  };
+
+  const setTableDiscount = async (tableName: string, discountPercent: number) => {
+    const validPercent = Math.max(0, Math.min(100, Math.round(Number(discountPercent) || 0)));
+    setTableDiscounts((prev) => {
+      const updated = { ...prev, [tableName]: validPercent };
+      AsyncStorage.setItem('@pos_table_discounts', JSON.stringify(updated)).catch(console.error);
+      return updated;
+    });
+
+    if (db) {
+      try {
+        await setDoc(
+          doc(db, TABLE_CONFIGS_COL, 'discounts'),
+          { [tableName]: validPercent },
+          { merge: true }
+        );
+      } catch (err) {
+        console.error("Lỗi khi lưu cấu hình chiết khấu bàn vào Firebase:", err);
       }
     }
   };
@@ -539,14 +604,35 @@ export const CartProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   const updateOrderItems = async (orderId: string, items: OrderItem[], note?: string) => {
-    const total = items.reduce((sum, item) => sum + item.price * item.quantity, 0);
-    const update: Record<string, unknown> = { items, total };
+    const targetOrder = orders.find((o) => o.id === orderId);
+    const subtotal = items.reduce((sum, item) => sum + item.price * item.quantity, 0);
+    const discountPercent = targetOrder?.discountPercent || (targetOrder ? (tableDiscounts[targetOrder.tableNumber] || 0) : 0);
+    const discountAmount = Math.round((subtotal * discountPercent) / 100);
+    const total = Math.max(0, subtotal - discountAmount);
+
+    const update: Record<string, unknown> = {
+      items,
+      subtotal,
+      discountPercent: discountPercent > 0 ? discountPercent : null,
+      discountAmount: discountAmount > 0 ? discountAmount : null,
+      total,
+    };
     if (note !== undefined) update.note = note.trim() !== '' ? note.trim() : null;
 
     // Cập nhật giao diện ngay lập tức (0ms delay)
     setOrders((prev) =>
       prev.map((order) =>
-        order.id === orderId ? { ...order, items, total, note: update.note as string | undefined } : order
+        order.id === orderId
+          ? {
+              ...order,
+              items,
+              subtotal,
+              discountPercent: discountPercent > 0 ? discountPercent : undefined,
+              discountAmount: discountAmount > 0 ? discountAmount : undefined,
+              total,
+              note: update.note as string | undefined,
+            }
+          : order
       )
     );
 
@@ -781,6 +867,83 @@ export const CartProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   };
 
+  const fetchOrdersByDateRange = async (startDate: Date, endDate: Date): Promise<Order[]> => {
+    const startMs = new Date(startDate.getFullYear(), startDate.getMonth(), startDate.getDate(), 0, 0, 0, 0).getTime();
+    const endMs = new Date(endDate.getFullYear(), endDate.getMonth(), endDate.getDate(), 23, 59, 59, 999).getTime();
+
+    const fetchedMap = new Map<string, Order>();
+
+    // 1. Quét Firestore nếu có db
+    if (db) {
+      try {
+        const qRange = query(
+          collection(db, ORDERS_COL),
+          where('createdAt', '>=', startMs),
+          where('createdAt', '<=', endMs)
+        );
+        const snapshot = await getDocs(qRange);
+        snapshot.forEach((d) => {
+          fetchedMap.set(d.id, { id: d.id, ...d.data() } as Order);
+        });
+      } catch (err) {
+        console.error("Lỗi khi tải đơn hàng theo khoảng ngày từ Firestore:", err);
+      }
+    }
+
+    // 2. Kết hợp với các đơn đang có trong state hiện tại (đơn vừa tạo/offline/legacy)
+    for (const order of orders) {
+      const timeMs = getOrderTimestampMs(order);
+      if (timeMs >= startMs && timeMs <= endMs) {
+        if (!fetchedMap.has(order.id)) {
+          fetchedMap.set(order.id, order);
+        }
+      }
+    }
+
+    // Sắp xếp mới nhất lên đầu
+    return Array.from(fetchedMap.values()).sort((a, b) => {
+      return getOrderTimestampMs(b) - getOrderTimestampMs(a);
+    });
+  };
+
+  const fetchExpensesByDateRange = async (startDate: Date, endDate: Date): Promise<Expense[]> => {
+    const startMs = new Date(startDate.getFullYear(), startDate.getMonth(), startDate.getDate(), 0, 0, 0, 0).getTime();
+    const endMs = new Date(endDate.getFullYear(), endDate.getMonth(), endDate.getDate(), 23, 59, 59, 999).getTime();
+
+    const fetchedMap = new Map<string, Expense>();
+
+    if (db) {
+      try {
+        const qRange = query(
+          collection(db, EXPENSES_COL),
+          where('createdAt', '>=', startMs),
+          where('createdAt', '<=', endMs)
+        );
+        const snapshot = await getDocs(qRange);
+        snapshot.forEach((d) => {
+          fetchedMap.set(d.id, { id: d.id, ...d.data() } as Expense);
+        });
+      } catch (err) {
+        console.error("Lỗi khi tải chi phí theo khoảng ngày từ Firestore:", err);
+      }
+    }
+
+    for (const exp of expenses) {
+      const timeMs = exp.createdAt || (exp.timestamp ? getOrderTimestampMs({ timestamp: exp.timestamp }) : 0);
+      if (timeMs >= startMs && timeMs <= endMs) {
+        if (!fetchedMap.has(exp.id)) {
+          fetchedMap.set(exp.id, exp);
+        }
+      }
+    }
+
+    return Array.from(fetchedMap.values()).sort((a, b) => {
+      const timeA = a.createdAt || (a.timestamp ? getOrderTimestampMs({ timestamp: a.timestamp }) : 0);
+      const timeB = b.createdAt || (b.timestamp ? getOrderTimestampMs({ timestamp: b.timestamp }) : 0);
+      return timeB - timeA;
+    });
+  };
+
   return (
     <CartContext.Provider
       value={{
@@ -807,6 +970,10 @@ export const CartProvider: React.FC<{ children: React.ReactNode }> = ({ children
         addExpense,
         deleteExpense,
         editExpense,
+        fetchOrdersByDateRange,
+        fetchExpensesByDateRange,
+        tableDiscounts,
+        setTableDiscount,
         isDemoMode: !db,
         resetDemoData: async () => {
           const demoOrders = getDemoOrders();

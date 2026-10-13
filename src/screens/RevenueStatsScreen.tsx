@@ -11,10 +11,11 @@ import {
   TextInput,
   Alert,
   useWindowDimensions,
+  ActivityIndicator,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { Colors, Spacing } from '../constants/theme';
-import { useCart, Order } from '../context/CartContext';
+import { useCart, Order, Expense } from '../context/CartContext';
 import DatePickerModal from '../components/DatePickerModal';
 import { getOrderDate } from '../utils/orderTime';
 
@@ -25,8 +26,11 @@ const formatDate = (date: Date) => {
   return `${d}/${m}/${y}`;
 };
 
-const parseTimestamp = (ts: string): Date => {
-  return getOrderDate({ timestamp: ts });
+const parseTimestamp = (item: { createdAt?: number; timestamp?: string } | string): Date => {
+  if (typeof item === 'string') {
+    return getOrderDate({ timestamp: item });
+  }
+  return getOrderDate(item);
 };
 
 const isTodayDate = (date: Date) => {
@@ -66,7 +70,15 @@ interface RevenueStatsScreenProps {
 export default function RevenueStatsScreen({ onBack }: RevenueStatsScreenProps) {
   const systemScheme = useColorScheme();
   const colors = Colors[systemScheme === 'dark' ? 'dark' : 'light'];
-  const { orders, expenses, addExpense, deleteExpense, editExpense } = useCart();
+  const {
+    orders,
+    expenses,
+    addExpense,
+    deleteExpense,
+    editExpense,
+    fetchOrdersByDateRange,
+    fetchExpensesByDateRange,
+  } = useCart();
 
   const [statsPeriod, setStatsPeriod] = useState<'today' | 'custom' | 'week' | 'month' | 'year' | 'range'>('today');
   const [statsDate, setStatsDate] = useState(new Date());
@@ -82,6 +94,11 @@ export default function RevenueStatsScreen({ onBack }: RevenueStatsScreenProps) 
   const [showRangeStartPicker, setShowRangeStartPicker] = useState(false);
   const [showRangeEndPicker, setShowRangeEndPicker] = useState(false);
 
+  // Dữ liệu tải theo yêu cầu (khi chọn ngày / tháng / khoảng ngày cũ)
+  const [rangeOrders, setRangeOrders] = useState<Order[] | null>(null);
+  const [rangeExpenses, setRangeExpenses] = useState<Expense[] | null>(null);
+  const [isLoadingRange, setIsLoadingRange] = useState(false);
+
   const [expName, setExpName] = useState('');
   const [expAmount, setExpAmount] = useState('');
   const [editingExpenseId, setEditingExpenseId] = useState<string | null>(null);
@@ -92,6 +109,65 @@ export default function RevenueStatsScreen({ onBack }: RevenueStatsScreenProps) 
 
   useEffect(() => {
     setZoomLevel(1); // Reset zoom level when period or date changes
+  }, [statsPeriod, statsDate, rangeStartDate, rangeEndDate]);
+
+  // Tự động tải đơn hàng & chi phí từ Firestore khi chọn mốc thời gian ngoài "Hôm nay"
+  useEffect(() => {
+    let isMounted = true;
+
+    if (statsPeriod === 'today') {
+      setRangeOrders(null);
+      setRangeExpenses(null);
+      setIsLoadingRange(false);
+      return;
+    }
+
+    let start = new Date();
+    let end = new Date();
+
+    if (statsPeriod === 'custom') {
+      start = statsDate;
+      end = statsDate;
+    } else if (statsPeriod === 'week') {
+      const range = getWeekRange(statsDate);
+      start = range.start;
+      end = range.end;
+    } else if (statsPeriod === 'month') {
+      start = new Date(statsDate.getFullYear(), statsDate.getMonth(), 1);
+      end = new Date(statsDate.getFullYear(), statsDate.getMonth() + 1, 0);
+    } else if (statsPeriod === 'year') {
+      start = new Date(statsDate.getFullYear(), 0, 1);
+      end = new Date(statsDate.getFullYear(), 11, 31);
+    } else if (statsPeriod === 'range') {
+      start = rangeStartDate;
+      end = rangeEndDate;
+    }
+
+    const loadRange = async () => {
+      setIsLoadingRange(true);
+      try {
+        const [fetchedOrders, fetchedExpenses] = await Promise.all([
+          fetchOrdersByDateRange(start, end),
+          fetchExpensesByDateRange(start, end),
+        ]);
+        if (isMounted) {
+          setRangeOrders(fetchedOrders);
+          setRangeExpenses(fetchedExpenses);
+        }
+      } catch (err) {
+        console.error("Lỗi khi tải dữ liệu khoảng thời gian:", err);
+      } finally {
+        if (isMounted) {
+          setIsLoadingRange(false);
+        }
+      }
+    };
+
+    loadRange();
+
+    return () => {
+      isMounted = false;
+    };
   }, [statsPeriod, statsDate, rangeStartDate, rangeEndDate]);
 
   const formatPrice = (price?: number | null) => {
@@ -129,23 +205,24 @@ export default function RevenueStatsScreen({ onBack }: RevenueStatsScreenProps) 
   const getFilteredOrders = () => {
     // Đơn đã xóa mềm (isDeleted=true) chỉ bị loại nếu chưa thanh toán.
     // Đơn đã thanh toán (paid) vẫn tính vào doanh thu dù đã xóa khỏi màn hình.
-    const visibleOrders = orders.filter((o) => !o.isDeleted || o.status === 'paid');
+    const sourceOrders = statsPeriod === 'today' ? orders : (rangeOrders ?? orders);
+    const visibleOrders = sourceOrders.filter((o) => !o.isDeleted || o.status === 'paid');
 
     if (statsPeriod === 'today') {
-      return visibleOrders.filter((o) => isTodayDate(parseTimestamp(o.timestamp)));
+      return visibleOrders.filter((o) => isTodayDate(parseTimestamp(o)));
     } else if (statsPeriod === 'custom') {
-      return visibleOrders.filter((o) => isSameDay(parseTimestamp(o.timestamp), statsDate));
+      return visibleOrders.filter((o) => isSameDay(parseTimestamp(o), statsDate));
     } else if (statsPeriod === 'week') {
-      return visibleOrders.filter((o) => isOrderInWeek(parseTimestamp(o.timestamp), statsDate));
+      return visibleOrders.filter((o) => isOrderInWeek(parseTimestamp(o), statsDate));
     } else if (statsPeriod === 'month') {
-      return visibleOrders.filter((o) => isOrderInMonth(parseTimestamp(o.timestamp), statsDate));
+      return visibleOrders.filter((o) => isOrderInMonth(parseTimestamp(o), statsDate));
     } else if (statsPeriod === 'year') {
-      return visibleOrders.filter((o) => isOrderInYear(parseTimestamp(o.timestamp), statsDate));
+      return visibleOrders.filter((o) => isOrderInYear(parseTimestamp(o), statsDate));
     } else if (statsPeriod === 'range') {
       const start = new Date(rangeStartDate.getFullYear(), rangeStartDate.getMonth(), rangeStartDate.getDate(), 0, 0, 0);
       const end = new Date(rangeEndDate.getFullYear(), rangeEndDate.getMonth(), rangeEndDate.getDate(), 23, 59, 59);
       return visibleOrders.filter((o) => {
-        const d = parseTimestamp(o.timestamp);
+        const d = parseTimestamp(o);
         return d >= start && d <= end;
       });
     }
@@ -153,25 +230,26 @@ export default function RevenueStatsScreen({ onBack }: RevenueStatsScreenProps) 
   };
 
   const getFilteredExpenses = () => {
+    const sourceExpenses = statsPeriod === 'today' ? expenses : (rangeExpenses ?? expenses);
     if (statsPeriod === 'today') {
-      return expenses.filter((e) => isTodayDate(parseTimestamp(e.timestamp)));
+      return sourceExpenses.filter((e) => isTodayDate(parseTimestamp(e)));
     } else if (statsPeriod === 'custom') {
-      return expenses.filter((e) => isSameDay(parseTimestamp(e.timestamp), statsDate));
+      return sourceExpenses.filter((e) => isSameDay(parseTimestamp(e), statsDate));
     } else if (statsPeriod === 'week') {
-      return expenses.filter((e) => isOrderInWeek(parseTimestamp(e.timestamp), statsDate));
+      return sourceExpenses.filter((e) => isOrderInWeek(parseTimestamp(e), statsDate));
     } else if (statsPeriod === 'month') {
-      return expenses.filter((e) => isOrderInMonth(parseTimestamp(e.timestamp), statsDate));
+      return sourceExpenses.filter((e) => isOrderInMonth(parseTimestamp(e), statsDate));
     } else if (statsPeriod === 'year') {
-      return expenses.filter((e) => isOrderInYear(parseTimestamp(e.timestamp), statsDate));
+      return sourceExpenses.filter((e) => isOrderInYear(parseTimestamp(e), statsDate));
     } else if (statsPeriod === 'range') {
       const start = new Date(rangeStartDate.getFullYear(), rangeStartDate.getMonth(), rangeStartDate.getDate(), 0, 0, 0);
       const end = new Date(rangeEndDate.getFullYear(), rangeEndDate.getMonth(), rangeEndDate.getDate(), 23, 59, 59);
-      return expenses.filter((e) => {
-        const d = parseTimestamp(e.timestamp);
+      return sourceExpenses.filter((e) => {
+        const d = parseTimestamp(e);
         return d >= start && d <= end;
       });
     }
-    return expenses;
+    return sourceExpenses;
   };
 
   const filteredOrders = getFilteredOrders();
@@ -196,10 +274,10 @@ export default function RevenueStatsScreen({ onBack }: RevenueStatsScreenProps) 
       while (current <= end) {
         const targetDate = new Date(current);
         const revenue = paidOrders
-          .filter((o) => isSameDay(parseTimestamp(o.timestamp), targetDate))
+          .filter((o) => isSameDay(parseTimestamp(o), targetDate))
           .reduce((sum, o) => sum + o.total, 0);
         const expense = filteredExpenses
-          .filter((e) => isSameDay(parseTimestamp(e.timestamp), targetDate))
+          .filter((e) => isSameDay(parseTimestamp(e), targetDate))
           .reduce((sum, e) => sum + e.amount, 0);
         data.push({
           label: `${targetDate.getDate()}/${targetDate.getMonth() + 1}`,
@@ -226,14 +304,14 @@ export default function RevenueStatsScreen({ onBack }: RevenueStatsScreenProps) 
       return intervals.map(inter => {
         const revenue = paidOrders
           .filter((o) => {
-            const h = parseTimestamp(o.timestamp).getHours();
+            const h = parseTimestamp(o).getHours();
             return h >= inter.startHour && h < inter.endHour;
           })
           .reduce((sum, o) => sum + o.total, 0);
 
         const expense = filteredExpenses
           .filter((e) => {
-            const h = parseTimestamp(e.timestamp).getHours();
+            const h = parseTimestamp(e).getHours();
             return h >= inter.startHour && h < inter.endHour;
           })
           .reduce((sum, e) => sum + e.amount, 0);
@@ -247,8 +325,8 @@ export default function RevenueStatsScreen({ onBack }: RevenueStatsScreenProps) 
       const shortLabels = ['T2', 'T3', 'T4', 'T5', 'T6', 'T7', 'CN'];
       return shortLabels.map((label, idx) => {
         const targetDate = new Date(start.getFullYear(), start.getMonth(), start.getDate() + idx);
-        const revenue = paidOrders.filter(o => isSameDay(parseTimestamp(o.timestamp), targetDate)).reduce((sum, o) => sum + o.total, 0);
-        const expense = filteredExpenses.filter(e => isSameDay(parseTimestamp(e.timestamp), targetDate)).reduce((sum, e) => sum + e.amount, 0);
+        const revenue = paidOrders.filter(o => isSameDay(parseTimestamp(o), targetDate)).reduce((sum, o) => sum + o.total, 0);
+        const expense = filteredExpenses.filter(e => isSameDay(parseTimestamp(e), targetDate)).reduce((sum, e) => sum + e.amount, 0);
 
         return { label, revenue, expense };
       });
@@ -263,10 +341,10 @@ export default function RevenueStatsScreen({ onBack }: RevenueStatsScreenProps) 
       for (let i = 0; i < daysCount; i++) {
         const targetDate = new Date(year, month, i + 1);
         const revenue = paidOrders
-          .filter((o) => isSameDay(parseTimestamp(o.timestamp), targetDate))
+          .filter((o) => isSameDay(parseTimestamp(o), targetDate))
           .reduce((sum, o) => sum + o.total, 0);
         const expense = filteredExpenses
-          .filter((e) => isSameDay(parseTimestamp(e.timestamp), targetDate))
+          .filter((e) => isSameDay(parseTimestamp(e), targetDate))
           .reduce((sum, e) => sum + e.amount, 0);
 
         data.push({
@@ -282,12 +360,12 @@ export default function RevenueStatsScreen({ onBack }: RevenueStatsScreenProps) 
       const months = ['Th 1', 'Th 2', 'Th 3', 'Th 4', 'Th 5', 'Th 6', 'Th 7', 'Th 8', 'Th 9', 'Th 10', 'Th 11', 'Th 12'];
       return months.map((mName, idx) => {
         const revenue = paidOrders.filter(o => {
-          const orderDate = parseTimestamp(o.timestamp);
+          const orderDate = parseTimestamp(o);
           return orderDate.getMonth() === idx;
         }).reduce((sum, o) => sum + o.total, 0);
 
         const expense = filteredExpenses.filter(e => {
-          const expDate = parseTimestamp(e.timestamp);
+          const expDate = parseTimestamp(e);
           return expDate.getMonth() === idx;
         }).reduce((sum, e) => sum + e.amount, 0);
 
@@ -670,6 +748,14 @@ export default function RevenueStatsScreen({ onBack }: RevenueStatsScreenProps) 
           title="Chọn ngày chi phí"
         />
 
+        {/* Loading banner khi tải dữ liệu từ Firestore */}
+        {isLoadingRange && (
+          <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', paddingVertical: 8, gap: 8 }}>
+            <ActivityIndicator size="small" color={colors.primary} />
+            <Text style={{ fontSize: 13, color: colors.textSecondary }}>Đang tải dữ liệu từ máy chủ...</Text>
+          </View>
+        )}
+
         {/* Main Content Scroll */}
         <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.scrollContent}>
 
@@ -816,7 +902,7 @@ export default function RevenueStatsScreen({ onBack }: RevenueStatsScreenProps) 
                           setEditingExpenseId(exp.id);
                           setExpName(exp.name);
                           setExpAmount(exp.amount.toString());
-                          setExpenseDate(parseTimestamp(exp.timestamp));
+                          setExpenseDate(parseTimestamp(exp));
                         }}
                         style={styles.expenseActionItemBtn}
                       >
